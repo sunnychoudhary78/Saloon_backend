@@ -1,0 +1,85 @@
+# ============================================
+# 📦 Node.js / Express Backend
+# ============================================
+
+# Node modules
+node_modules/
+
+# Environment files (never commit secrets)
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+
+/uploads/
+work.txt
+deploy.sh
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Runtime files
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage / test outputs
+coverage/
+*.lcov
+
+# Sequelize migration and seed backups
+migrations/*.tmp
+seeders/*.tmp
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+
+# Temporary / cache folders
+.cache/
+.tmp/
+dist/
+build/
+
+# Editor / IDE configs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ============================================
+# ⚛️ Frontend (Vite + React + Tailwind)
+# ============================================
+# If you keep frontend in same repo
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.local
+
+# ============================================
+# 🧪 Other
+# ============================================
+# Local database files (if any)
+*.sqlite
+*.sqlite3
+
+# Debug / inspection artifacts
+*.tgz
+*.bak
+*.tmp
+
+# ESLint / prettier cache
+.eslintcache
+.prettierignore
+
+# ============================================
+# ✅ End of File
+# ============================================

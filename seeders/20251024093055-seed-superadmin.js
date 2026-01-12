@@ -1,11 +1,12 @@
 'use strict';
 const bcrypt = require('bcryptjs');
+const schema = process.env.DB_SCHEMA || 'template_schema';
 
 module.exports = {
   up: async (queryInterface, Sequelize) => {
     // Check if SuperAdmin already exists (use schema-qualified table)
     const existing = await queryInterface.rawSelect(
-      { schema: 'lms_api', tableName: 'users' },
+      { schema, tableName: 'users' },
       { where: { email: 'superadmin@example.com' } },
       ['id']
     );
@@ -13,7 +14,7 @@ module.exports = {
     if (!existing) {
       // Get SuperAdmin role ID dynamically (schema-qualified)
       const [roles] = await queryInterface.sequelize.query(
-        `SELECT id FROM lms_api.roles WHERE name = 'SuperAdmin' LIMIT 1;`
+        `SELECT id FROM ${schema}.roles WHERE name = 'SuperAdmin' LIMIT 1;`
       );
 
       if (!roles || roles.length === 0) throw new Error('SuperAdmin role not found in roles table');
@@ -25,7 +26,7 @@ module.exports = {
       const hashedPassword = await bcrypt.hash('SuperAdmin123!', salt);
 
       await queryInterface.bulkInsert(
-        { schema: 'lms_api', tableName: 'users' },
+        { schema, tableName: 'users' },
         [
           {
             name: 'Super Admin',
@@ -45,7 +46,7 @@ module.exports = {
 
   down: async (queryInterface, Sequelize) => {
     await queryInterface.bulkDelete(
-      { schema: 'lms_api', tableName: 'users' },
+      { schema, tableName: 'users' },
       { email: 'superadmin@example.com' }
     );
   }

@@ -4,10 +4,9 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node LMS_API.js",
-    "dev": "nodemon LMS_API.js",
-    "sequelize": "npx sequelize-cli --config config/config.js",
-    "test-attendance": "node scripts/attendance.test.js"
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "sequelize": "npx sequelize-cli --config config/config.js"
   },
   "keywords": [],
   "author": "",

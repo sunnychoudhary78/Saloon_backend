@@ -25,7 +25,7 @@ module.exports = (sequelize, DataTypes) => {
     tableName: 'roles',
     underscored: true,
     // if you're using a specific schema:
-    // schema: 'lms_db'
+    // schema: 'template_schema'
   });
 
   Role.associate = (models) => {

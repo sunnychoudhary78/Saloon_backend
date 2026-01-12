@@ -1,22 +1,26 @@
 'use strict';
+const schema = process.env.DB_SCHEMA || 'template_schema';
 
-/** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
-    // Enable UUID generation for PostgreSQL
-    await queryInterface.sequelize.query('CREATE EXTENSION IF NOT EXISTS "uuid-ossp";');
-
-    // Create new departments table with UUID
-    await queryInterface.createTable({ schema: 'lms_api', tableName: 'departments' }, {
+    await queryInterface.createTable({ schema, tableName: 'common_variables' }, {
       id: {
         type: Sequelize.UUID,
         defaultValue: Sequelize.literal('gen_random_uuid()'),
         primaryKey: true
       },
+      type: {
+        type: Sequelize.STRING,
+        allowNull: false
+      },
       name: {
         type: Sequelize.STRING,
+        allowNull: false
+      },
+      is_active: {
+        type: Sequelize.BOOLEAN,
         allowNull: false,
-        unique: true
+        defaultValue: true
       },
       created_by: {
         type: Sequelize.UUID,
@@ -26,22 +30,19 @@ module.exports = {
         type: Sequelize.UUID,
         allowNull: true
       },
-      is_active: {
-        type: Sequelize.BOOLEAN,
-        defaultValue: true
-      },
       created_at: {
         allowNull: false,
-        type: Sequelize.DATE
+        type: Sequelize.DATE,
+        defaultValue: Sequelize.literal('NOW()')
       },
       updated_at: {
         allowNull: false,
-        type: Sequelize.DATE
+        type: Sequelize.DATE,
+        defaultValue: Sequelize.literal('NOW()')
       }
     });
   },
-
   async down(queryInterface, Sequelize) {
-    await queryInterface.dropTable({ schema: 'lms_api', tableName: 'departments' });
+    await queryInterface.dropTable({ schema, tableName: 'common_variables' });
   }
 };

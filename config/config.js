@@ -1,9 +1,9 @@
 require('dotenv').config();
 
-const schema = process.env.DB_SCHEMA || 'lms_api';
+const schema = process.env.DB_SCHEMA || 'template_schema';
 const appEnv = (process.env.APP_ENV || 'development').toLowerCase();
 const suffixFor = (e) => e === 'production' ? 'PROD' : e === 'test' ? 'TEST' : 'DEV';
-const defFor = (e) => e === 'test' ? 'lms_test' : 'lms_db';
+const defFor = (e) => e === 'test' ? 'template_db' : 'template_db';
 const build = (e) => {
   const s = suffixFor(e);
   return {

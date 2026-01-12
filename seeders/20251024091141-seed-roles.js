@@ -1,5 +1,6 @@
 'use strict';
 const { v4: uuidv4 } = require('uuid');
+const schema = process.env.DB_SCHEMA || 'template_schema';
 
 module.exports = {
   up: async (queryInterface, Sequelize) => {
@@ -15,14 +16,14 @@ module.exports = {
       }
     ];
 
-    await queryInterface.bulkInsert({ schema: 'lms_api', tableName: 'roles' }, roles);
+    await queryInterface.bulkInsert({ schema, tableName: 'roles' }, roles);
 
     // Log the SuperAdmin ID for reference
     console.log('Seeded SuperAdmin role with ID:', roles[0].id);
   },
 
   down: async (queryInterface, Sequelize) => {
-    await queryInterface.bulkDelete({ schema: 'lms_api', tableName: 'roles' }, null, {});
+    await queryInterface.bulkDelete({ schema, tableName: 'roles' }, null, {});
 
   }
 };

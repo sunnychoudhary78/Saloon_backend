@@ -1,4 +1,5 @@
 'use strict';
+const schema = process.env.DB_SCHEMA || 'template_schema';
 
 module.exports = {
   up: async (queryInterface, Sequelize) => {
@@ -39,7 +40,7 @@ module.exports = {
 
     // Get existing permission names to avoid duplicates
     const existingPermissions = await queryInterface.sequelize.query(
-      'SELECT name FROM lms_api.permissions;',
+      `SELECT name FROM ${schema}.permissions;`,
       { type: queryInterface.sequelize.QueryTypes.SELECT }
     );
 
@@ -47,7 +48,7 @@ module.exports = {
     const toInsert = permissions.filter(p => !existingNames.includes(p.name));
 
     if (toInsert.length > 0) {
-      await queryInterface.bulkInsert({ schema: 'lms_api', tableName: 'permissions' }, toInsert);
+      await queryInterface.bulkInsert({ schema, tableName: 'permissions' }, toInsert);
     }
   },
 
@@ -64,6 +65,6 @@ module.exports = {
       'variables.create','variables.delete','variables.read','variables.update'
     ];
 
-    await queryInterface.bulkDelete({ schema: 'lms_api', tableName: 'permissions' }, { name: names }, {});
+    await queryInterface.bulkDelete({ schema: 'template_schema', tableName: 'permissions' }, { name: names }, {});
   }
 };

@@ -3,47 +3,47 @@
 psql -U postgres -h localhost -p 5432
 
 2️⃣ Create the user (role)
-CREATE USER immortalmplmsuser WITH PASSWORD 'immortalmplms@9090';
+CREATE USER templateuser WITH PASSWORD 'templatePass';
 
 3️⃣ Create the database
-CREATE DATABASE immortalmp_lms_db;
+CREATE DATABASE template_db;
 
 4️⃣ Restrict public access and allow your app user
-REVOKE CONNECT ON DATABASE immortalmp_lms_db FROM PUBLIC;
-GRANT CONNECT ON DATABASE immortalmp_lms_db TO immortalmplmsuser;
+REVOKE CONNECT ON DATABASE template_db FROM PUBLIC;
+GRANT CONNECT ON DATABASE template_db TO templateuser;
 
 5️⃣ Connect to the database
-\c immortalmp_lms_db
+\c template_db
 
 6️⃣ Create the schema
-CREATE SCHEMA IF NOT EXISTS lms_api AUTHORIZATION immortalmplmsuser;
+CREATE SCHEMA IF NOT EXISTS template_schema AUTHORIZATION templateuser;
 
 7️⃣ Harden schema permissions
-REVOKE ALL ON SCHEMA lms_api FROM PUBLIC;
-GRANT USAGE ON SCHEMA lms_api TO immortalmplmsuser;
-GRANT CREATE ON SCHEMA lms_api TO immortalmplmsuser;
+REVOKE ALL ON SCHEMA template_schema FROM PUBLIC;
+GRANT USAGE ON SCHEMA template_schema TO templateuser;
+GRANT CREATE ON SCHEMA template_schema TO templateuser;
 
 8️⃣ Set default privileges for future objects
-ALTER DEFAULT PRIVILEGES FOR ROLE immortalmplmsuser IN SCHEMA lms_api
-  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO immortalmplmsuser;
+ALTER DEFAULT PRIVILEGES FOR ROLE templateuser IN SCHEMA template_schema
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO templateuser;
 
-ALTER DEFAULT PRIVILEGES FOR ROLE immortalmplmsuser IN SCHEMA lms_api
-  GRANT USAGE, SELECT ON SEQUENCES TO immortalmplmsuser;
+ALTER DEFAULT PRIVILEGES FOR ROLE templateuser IN SCHEMA template_schema
+  GRANT USAGE, SELECT ON SEQUENCES TO templateuser;
 
 9️⃣ Set user search path
-ALTER ROLE immortalmplmsuser SET search_path = 'lms_api', public;
+ALTER ROLE templateuser SET search_path = 'template_schema', public;
 
 🔟 Create necessary extensions
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 
-GRANT CONNECT ON DATABASE immortalmp_lms_db TO immortalmplmsuser;
-GRANT USAGE, CREATE ON SCHEMA lms_api TO immortalmplmsuser;
+GRANT CONNECT ON DATABASE template_db TO templateuser;
+GRANT USAGE, CREATE ON SCHEMA template_schema TO templateuser;
 
-GRANT ALL PRIVILEGES ON DATABASE immortalmp_lms_db TO immortalmplmsuser;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA lms_api TO immortalmplmsuser;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA lms_api TO immortalmplmsuser;
+GRANT ALL PRIVILEGES ON DATABASE template_db TO templateuser;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA template_schema TO templateuser;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA template_schema TO templateuser;
 
 npx sequelize-cli db:migrate
 
@@ -56,48 +56,48 @@ npx sequelize-cli db:seed:all
 psql -U postgres -h localhost -p 5432
  
 2️⃣ Create the user (role)
-CREATE USER immortalmplmsuser WITH PASSWORD 'immortalmplms@9090';
+CREATE USER templateuser WITH PASSWORD 'templatePass';
  
 3️⃣ Create the database
-CREATE DATABASE uat_immortalmp_lms_db;
+CREATE DATABASE template_db;
  
  
 4️⃣ Restrict public access and allow your app user
-REVOKE CONNECT ON DATABASE uat_immortalmp_lms_db FROM PUBLIC;
-GRANT CONNECT ON DATABASE uat_immortalmp_lms_db TO immortalmplmsuser;
+REVOKE CONNECT ON DATABASE template_db FROM PUBLIC;
+GRANT CONNECT ON DATABASE template_db TO templateuser;
  
 5️⃣ Connect to the database
-\c uat_immortalmp_lms_db
+\c template_db
  
 6️⃣ Create the schema
-CREATE SCHEMA IF NOT EXISTS lms_api AUTHORIZATION immortalmplmsuser;
+CREATE SCHEMA IF NOT EXISTS template_schema AUTHORIZATION templateuser;
  
 7️⃣ Harden schema permissions
-REVOKE ALL ON SCHEMA lms_api FROM PUBLIC;
-GRANT USAGE ON SCHEMA lms_api TO immortalmplmsuser;
-GRANT CREATE ON SCHEMA lms_api TO immortalmplmsuser;
+REVOKE ALL ON SCHEMA template_schema FROM PUBLIC;
+GRANT USAGE ON SCHEMA template_schema TO templateuser;
+GRANT CREATE ON SCHEMA template_schema TO templateuser;
  
 8️⃣ Set default privileges for future objects
-ALTER DEFAULT PRIVILEGES FOR ROLE immortalmplmsuser IN SCHEMA lms_api
-  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO immortalmplmsuser;
+ALTER DEFAULT PRIVILEGES FOR ROLE templateuser IN SCHEMA template_schema
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO templateuser;
  
-ALTER DEFAULT PRIVILEGES FOR ROLE immortalmplmsuser IN SCHEMA lms_api
-  GRANT USAGE, SELECT ON SEQUENCES TO immortalmplmsuser;
+ALTER DEFAULT PRIVILEGES FOR ROLE templateuser IN SCHEMA template_schema
+  GRANT USAGE, SELECT ON SEQUENCES TO templateuser;
  
 9️⃣ Set user search path
-ALTER ROLE immortalmplmsuser SET search_path = 'lms_api', public;
+ALTER ROLE templateuser SET search_path = 'template_schema', public;
  
 🔟 Create necessary extensions
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
  
  
-GRANT CONNECT ON DATABASE uat_immortalmp_lms_db TO immortalmplmsuser;
-GRANT USAGE, CREATE ON SCHEMA lms_api TO immortalmplmsuser;
+GRANT CONNECT ON DATABASE template_db TO templateuser;
+GRANT USAGE, CREATE ON SCHEMA template_schema TO templateuser;
 
-GRANT ALL PRIVILEGES ON DATABASE uat_immortalmp_lms_db TO immortalmplmsuser;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA lms_api TO immortalmplmsuser;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA lms_api TO immortalmplmsuser;
+GRANT ALL PRIVILEGES ON DATABASE template_db TO templateuser;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA template_schema TO templateuser;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA template_schema TO templateuser;
  
  
 npx sequelize-cli db:migrate

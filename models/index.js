@@ -38,7 +38,7 @@ const sequelize = new Sequelize(dbName, dbUser, dbPassword, {
   dialect: dbDialect,
   logging: false,
   define: config.define || {},
-  searchPath: config.searchPath || process.env.DB_SCHEMA || 'lms_api',
+  searchPath: config.searchPath || process.env.DB_SCHEMA || 'template_schema',
 });
 
 const db = {};
@@ -72,11 +72,11 @@ db.Sequelize = Sequelize;
 //   const [results] = await sequelize.query(`
 //     SELECT table_name
 //     FROM information_schema.tables
-//     WHERE table_schema = 'lms_api'
+//     WHERE table_schema = 'template_schema'
 //     ORDER BY table_name;
 //   `);
 
-//   console.log('📌 Tables in schema lms_api:');
+//   console.log('📌 Tables in schema template_schema:');
 //   results.forEach(t => console.log(t.table_name));
 // }
 

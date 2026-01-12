@@ -1,7 +1,7 @@
 // controllers/tableConfigController.js
 const { sequelize } = require('../models'); // adjust path if needed
 const { Op } = require('sequelize');
-const { columnRegistry, departmentRegistry, leaveTypeRegistry, probationRegistry, rolesRegistry, permissionsRegistry, attendanceSummaryRegistry, leaveAllocationsRegistry } = require('../config/columnRegistry');
+const { columnRegistry, departmentRegistry, rolesRegistry, permissionsRegistry } = require('../config/columnRegistry');
 
 const TableConfig = sequelize.models.TableConfig;
 
@@ -13,12 +13,8 @@ const TableConfig = sequelize.models.TableConfig;
 function getRegistryForTable(tableKey = 'employees') {
   if (tableKey === 'employees') return columnRegistry;
   if (tableKey === 'department') return departmentRegistry;
-  if (tableKey === 'leave_type') return leaveTypeRegistry;
-  if (tableKey === 'probation') return probationRegistry;
   if (tableKey === 'roles') return rolesRegistry;
   if (tableKey === 'permissions') return permissionsRegistry;
-  if (tableKey === 'attendance_summary') return attendanceSummaryRegistry;
-  if (tableKey === 'leave_allocations') return leaveAllocationsRegistry;
   return [];
 }
 
@@ -76,10 +72,6 @@ exports.upsertTableConfig = async (req, res) => {
       .filter((c) => {
         if (!c || typeof c.key !== 'string') return false;
         if (allowedKeys.has(c.key)) return true;
-        // Allow dynamic leave-type columns for attendance summary: stats.lt_<LeaveName>
-        if (tableKey === 'attendance_summary' && /^stats\.lt_.+$/i.test(c.key)) return true;
-        // Allow dynamic leave blocks for leave allocations: leave.<id> (UUID supported)
-        if (tableKey === 'leave_allocations' && /^leave\.[a-zA-Z0-9-]+$/i.test(c.key)) return true;
         return false;
       })
       .map((c, idx) => ({

@@ -60,6 +60,9 @@ app.use('/api/drafts', require('./routes/draftRoutes'));
 app.use('/api/company-settings', require('./routes/companySettingRoutes'));
 app.use('/api/variables', require('./routes/variablesRoutes'));
 app.use('/api/stats', require('./routes/statsRoutes'));
+app.use('/api/blood-groups', require('./routes/bloodGroupRoutes'));
+app.use('/api/marital-statuses', require('./routes/maritalStatusRoutes'));
+app.use('/api/genders', require('./routes/genderRoutes'));
 
 // Global error handler
 

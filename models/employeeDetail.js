@@ -189,14 +189,6 @@ module.exports = (sequelize, DataTypes) => {
       foreignKey: 'employee_id',
       as: 'addresses',
     });
-    EmployeeDetail.hasMany(models.Dependent, {
-      foreignKey: 'employee_id',
-      as: 'dependents',
-    });
-    EmployeeDetail.hasMany(models.PayrollComponent, {
-      foreignKey: 'employee_id',
-      as: 'payroll_components',
-    });
     EmployeeDetail.belongsTo(models.User, {
       foreignKey: 'probation_reviewed_by',
       as: 'probation_reviewed_by_user',

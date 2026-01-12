@@ -200,8 +200,8 @@ exports.companiesQuery = async (req, res) => {
   const where = and.length ? { [Op.and]: and } : {};
   const { rows, count } = await Company.findAndCountAll({
     where,
-    attributes: ['id', 'name', 'description', 'address', 'logo_filename', 'is_active', 'created_at', 'updated_at'],
-    order: [['created_at', 'DESC']],
+    attributes: ['id', 'name', 'description', 'address', 'logo_filename', 'is_active', 'sequence_order', 'created_at', 'updated_at'],
+    order: [['sequence_order', 'ASC'], ['created_at', 'DESC']],
     limit,
     offset,
   });
@@ -209,10 +209,31 @@ exports.companiesQuery = async (req, res) => {
     meta: { page, limit, total: count || 0, totalPages: Math.max(1, Math.ceil((count || 0) / limit)) },
     columns: [
       { key: 'name', label: 'Name' },
+      { key: 'sequence_order', label: 'Order', type: 'number' },
       { key: 'is_active', label: 'Active', type: 'boolean' },
       { key: 'created_at', label: 'Created At', type: 'date' },
       { key: 'updated_at', label: 'Updated At', type: 'date' },
     ],
     rows,
   });
+};
+
+exports.reorderCompanies = async (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids)) throw new AppError('IDs array is required', 400);
+
+  const t = await sequelize.transaction();
+  try {
+    for (let i = 0; i < ids.length; i++) {
+      await Company.update(
+        { sequence_order: i, updated_at: new Date() },
+        { where: { id: ids[i] }, transaction: t }
+      );
+    }
+    await t.commit();
+    res.json({ message: 'Sequence updated' });
+  } catch (err) {
+    await t.rollback();
+    throw err;
+  }
 };

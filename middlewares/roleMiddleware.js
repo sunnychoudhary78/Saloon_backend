@@ -1,11 +1,13 @@
-// allowedRoles: array of role names allowed for this route
+const { hasAnyRole } = require('../utils/authHelpers');
+
 const roleMiddleware = (allowedRoles) => {
   return (req, res, next) => {
     if (!req.user) return res.status(401).json({ message: 'Unauthorized' });
-    const userRole = req.user.Role.name; // included via authMiddleware
-    if (!allowedRoles.includes(userRole)) {
+
+    if (!hasAnyRole(req.user, allowedRoles)) {
       return res.status(403).json({ message: 'Forbidden: insufficient role' });
     }
+
     next();
   };
 };

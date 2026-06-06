@@ -6,7 +6,11 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node index.js",
     "dev": "nodemon index.js",
-    "sequelize": "npx sequelize-cli --config config/config.js"
+    "sequelize": "npx sequelize-cli --config config/config.js",
+    "db:migrate": "npx sequelize-cli db:migrate",
+    "db:seed": "npx sequelize-cli db:seed:all",
+    "db:reset": "node scripts/db-reset.js",
+    "db:verify": "node scripts/verify-db.js"
   },
   "keywords": [],
   "author": "",

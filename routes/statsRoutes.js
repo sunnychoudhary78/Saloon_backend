@@ -5,13 +5,25 @@ const authMiddleware = require('../middlewares/authMiddleware');
 const permissionMiddleware = require('../middlewares/permissionMiddleware');
 const asyncHandler = require('../middlewares/asyncHandler');
 
-// GET /api/stats/admin-overview
-// Requires 'stats.read' permission
 router.get(
-  '/admin-overview',
+  '/salon-overview',
   authMiddleware,
   permissionMiddleware('stats.read'),
-  statsController.getAdminOverview
+  asyncHandler(statsController.getSalonOverview)
+);
+
+router.get(
+  '/charts',
+  authMiddleware,
+  permissionMiddleware('stats.read'),
+  asyncHandler(statsController.getCharts)
+);
+
+router.get(
+  '/recent-activity',
+  authMiddleware,
+  permissionMiddleware('stats.read'),
+  asyncHandler(statsController.getRecentActivity)
 );
 
 module.exports = router;

@@ -1,32 +1,47 @@
+# Salon Marketplace Platform — Permissions
 
+## Stats
+- stats.read
 
+## Salon Owners
+- salonOwner.read, salonOwner.create, salonOwner.update, salonOwner.block
 
+## Salon Applications
+- salonApplication.read, salonApplication.approve, salonApplication.reject
 
-companySettings.read
-companySettings.update
-department.create
-department.makeInactive
-department.read
-department.update
+## Salons
+- salon.read, salon.create, salon.update, salon.suspend, salon.close
 
-permission.assign
-permission.create
-permission.makeInactive
-permission.read
-permission.update
-probation.confirm
-role.assign
-role.create
-role.makeInactive
-role.read
-role.update
-test.param
-user.confirmProbation
-user.create
-user.makeInactive
-user.read
-user.update
-variables.create
-variables.delete
-variables.read
-variables.update
+## Service Categories
+- serviceCategory.read, serviceCategory.create, serviceCategory.update, serviceCategory.makeInactive
+
+## Services
+- service.read, service.create, service.update, service.makeInactive
+
+## Customers
+- customer.read, customer.update, customer.block
+
+## Bookings
+- booking.read, booking.update
+
+## Reviews
+- review.read, review.moderate, review.hide
+
+## Coupons
+- coupon.read, coupon.create, coupon.update, coupon.makeInactive
+
+## Banners
+- banner.read, banner.create, banner.update, banner.makeInactive
+
+## Platform Settings
+- platformSetting.read, platformSetting.update
+
+## Audit Logs
+- auditLog.read
+
+## Roles & Permissions
+- role.read, role.create, role.update, role.assign, role.makeInactive
+- permission.read, permission.create, permission.update, permission.assign, permission.makeInactive
+
+## Users
+- user.read, user.create, user.update, user.makeInactive

@@ -3,6 +3,7 @@ const router = express.Router();
 const passport = require('passport');
 const { login, getPermissions, getMe, changePassword, adminChangePassword } = require('../controllers/authController');
 const authMiddleware = require('../middlewares/authMiddleware');
+const { validateLogin } = require('../validators/authValidator');
 
 // Google OAuth
 router.get('/google', passport.authenticate('google', { scope: ['profile','email'] }));
@@ -12,7 +13,7 @@ router.get('/google/callback', passport.authenticate('google', { session: false,
 });
 
 // Email/password login
-router.post('/login', login);
+router.post('/login', validateLogin, login);
 
 // Return permissions for currently authenticated user
 router.get('/permissions', authMiddleware, getPermissions);

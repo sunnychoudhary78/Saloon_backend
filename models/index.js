@@ -38,7 +38,7 @@ const sequelize = new Sequelize(dbName, dbUser, dbPassword, {
   dialect: dbDialect,
   logging: false,
   define: config.define || {},
-  searchPath: config.searchPath || process.env.DB_SCHEMA || 'template_schema',
+  searchPath: config.searchPath || process.env.DB_SCHEMA || 'salon_booking_schema',
 });
 
 const db = {};

@@ -1,30 +1,28 @@
 const bcrypt = require('bcryptjs');
-const { User, Role, Department } = require('../models');
+const { User, Role, UserRole } = require('../models');
+const { getUnionPermissions } = require('../utils/authHelpers');
 
 exports.createUser = async (req, res) => {
-  const { name, email, password, roleId } = req.body;
+  const { name, email, password, phone, roleIds } = req.body;
 
   try {
-    // Determine creator's permissions (loaded on req.user by authMiddleware)
-    const creatorPerms = (req.user && req.user.Role && req.user.Role.permissions) ? req.user.Role.permissions.map(p => p.name) : [];
+    const creatorPerms = getUnionPermissions(req.user).map((p) => p.name);
 
-    // If a roleId is provided, ensure creator has role.assign permission
-    let role;
-    if (roleId) {
+    let roles = [];
+    if (roleIds && roleIds.length) {
       if (!creatorPerms.includes('role.assign')) {
         return res.status(403).json({ message: 'Forbidden: cannot assign roles' });
       }
-
-      role = await Role.findOne({ where: { id: roleId } });
-      if (!role) return res.status(400).json({ message: 'Role not found' });
+      roles = await Role.findAll({ where: { id: roleIds } });
+      if (roles.length !== roleIds.length) {
+        return res.status(400).json({ message: 'One or more roles not found' });
+      }
     } else {
-      // default to 'Employee' role if not specified
-      role = await Role.findOne({ where: { name: 'Employee' } });
-      if (!role) return res.status(500).json({ message: "Default role 'Employee' not found" });
+      const adminRole = await Role.findOne({ where: { name: 'ADMIN' } });
+      if (!adminRole) return res.status(500).json({ message: "Default role 'ADMIN' not found" });
+      roles = [adminRole];
     }
 
-
-    // Hash password if provided
     let hashedPassword = null;
     if (password) {
       const salt = await bcrypt.genSalt(10);
@@ -34,10 +32,21 @@ exports.createUser = async (req, res) => {
     const user = await User.create({
       name,
       email,
+      phone: phone || null,
       password: hashedPassword,
-      roleId: role.id,
-      created_by: req.user.id
+      status: 'ACTIVE',
+      created_by: req.user.id,
     });
+
+    for (const role of roles) {
+      await UserRole.create({
+        user_id: user.id,
+        role_id: role.id,
+        assigned_by: req.user.id,
+        assigned_at: new Date(),
+      });
+    }
+
     res.status(201).json({ message: 'User created', user });
   } catch (err) {
     console.error(err);
@@ -48,8 +57,12 @@ exports.createUser = async (req, res) => {
 exports.getAllUsers = async (req, res) => {
   try {
     const { limit, offset } = req.query;
-
-    const users = await User.findAll({ include: [Role], limit, offset });
+    const users = await User.findAll({
+      include: [{ model: Role, as: 'Roles', through: { attributes: [] } }],
+      limit,
+      offset,
+      attributes: { exclude: ['password'] },
+    });
     res.json({ users });
   } catch (err) {
     console.error('getAllUsers error', err);
@@ -60,14 +73,11 @@ exports.getAllUsers = async (req, res) => {
 exports.getUserById = async (req, res) => {
   try {
     const { id } = req.params;
-    if (!id) return res.status(400).json({ message: 'User id required' });
-
     const user = await User.findByPk(id, {
-      include: [Role],
-      attributes: { exclude: ['password'] }
+      include: [{ model: Role, as: 'Roles', through: { attributes: [] } }],
+      attributes: { exclude: ['password'] },
     });
     if (!user) return res.status(404).json({ message: 'User not found' });
-
     return res.json({ user });
   } catch (err) {
     console.error('getUserById error', err);
@@ -78,12 +88,9 @@ exports.getUserById = async (req, res) => {
 exports.updateUser = async (req, res) => {
   try {
     const editorId = req.user && req.user.id;
-    if (!editorId) return res.status(401).json({ message: 'Unauthorized' });
-
     const { id } = req.params;
-    if (!id) return res.status(400).json({ message: 'User id required' });
+    const { name, email, phone, roleIds, status } = req.body || {};
 
-    const { name, email, roleId } = req.body || {};
     const user = await User.findByPk(id);
     if (!user) return res.status(404).json({ message: 'User not found' });
 
@@ -94,22 +101,35 @@ exports.updateUser = async (req, res) => {
       }
     }
 
-    let roleToAssign = null;
-    if (roleId) {
-      roleToAssign = await Role.findByPk(roleId);
-      if (!roleToAssign) return res.status(400).json({ message: 'Role not found' });
+    if (name) user.name = name;
+    if (email) user.email = email;
+    if (phone !== undefined) user.phone = phone;
+    if (status) {
+      user.status = status;
+      user.is_active = status === 'ACTIVE';
     }
-
-    user.name = typeof name === 'string' ? name : user.name;
-    user.email = typeof email === 'string' ? email : user.email;
-    if (roleToAssign) user.roleId = roleToAssign.id;
     user.updated_by = editorId;
-    user.updated_at = new Date();
     await user.save();
 
+    if (roleIds && Array.isArray(roleIds)) {
+      const creatorPerms = getUnionPermissions(req.user).map((p) => p.name);
+      if (!creatorPerms.includes('role.assign')) {
+        return res.status(403).json({ message: 'Forbidden: cannot assign roles' });
+      }
+      await UserRole.destroy({ where: { user_id: user.id } });
+      for (const roleId of roleIds) {
+        await UserRole.create({
+          user_id: user.id,
+          role_id: roleId,
+          assigned_by: editorId,
+          assigned_at: new Date(),
+        });
+      }
+    }
+
     const updated = await User.findByPk(id, {
-      include: [Role],
-      attributes: { exclude: ['password'] }
+      include: [{ model: Role, as: 'Roles', through: { attributes: [] } }],
+      attributes: { exclude: ['password'] },
     });
 
     return res.json({ message: 'User updated', user: updated });

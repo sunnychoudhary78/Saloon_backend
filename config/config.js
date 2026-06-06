@@ -1,9 +1,16 @@
 require('dotenv').config();
 
-const schema = process.env.DB_SCHEMA || 'template_schema';
+const { envSuffix } = require('./envSuffix');
+
+const schema = process.env.DB_SCHEMA || 'salon_booking_schema';
 const appEnv = (process.env.APP_ENV || 'development').toLowerCase();
-const suffixFor = (e) => e === 'production' ? 'PROD' : e === 'test' ? 'TEST' : 'DEV';
-const defFor = (e) => e === 'test' ? 'template_db' : 'template_db';
+const suffixFor = (e) => envSuffix(e);
+const defFor = (e) => {
+  const env = e.toLowerCase();
+  if (env === 'uat') return 'salon_booking_uat_db';
+  if (env === 'production') return 'salon_booking_prod_db';
+  return 'salon_booking_db';
+};
 const build = (e) => {
   const s = suffixFor(e);
   return {
@@ -22,6 +29,7 @@ const build = (e) => {
 const cfg = {
   development: build('development'),
   test: build('test'),
+  uat: build('uat'),
   production: build('production'),
 };
 

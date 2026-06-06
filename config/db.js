@@ -1,8 +1,8 @@
 const { Sequelize } = require('sequelize');
 require('dotenv').config();
 
-const env = (process.env.APP_ENV || 'development').toLowerCase();
-const suffix = env === 'production' ? 'PROD' : env === 'test' ? 'TEST' : 'DEV';
+const { envSuffix } = require('./envSuffix');
+const suffix = envSuffix(process.env.APP_ENV || 'development');
 
 const pick = (key, def) => process.env[`${key}_${suffix}`] ?? def;
 
@@ -17,8 +17,8 @@ const sequelize = new Sequelize(DB_NAME, DB_USER, DB_PASSWORD, {
   port: DB_PORT,
   dialect: 'postgres',
   logging: false,
-  define: { schema: process.env.DB_SCHEMA || 'template_schema' },
-  searchPath: process.env.DB_SCHEMA || 'template_schema',
+  define: { schema: process.env.DB_SCHEMA || 'salon_booking_schema' },
+  searchPath: process.env.DB_SCHEMA || 'salon_booking_schema',
 });
 
 module.exports = sequelize;

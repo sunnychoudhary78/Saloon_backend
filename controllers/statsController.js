@@ -1,58 +1,112 @@
-const { User, Company, EmployeeDetail, Role } = require('../models');
-const { Op } = require('sequelize');
-const AppError = require('../middlewares/AppError');
+const {
+  Salon,
+  SalonApplication,
+  Customer,
+  Booking,
+  Review,
+  SalonOwner,
+  User,
+  Role,
+  UserRole,
+  sequelize,
+} = require('../models');
+const { Op, fn, col, literal } = require('sequelize');
 
-/**
- * GET /api/stats/admin-overview
- * Returns counts for Employees, Companies, and Admins.
- * Requires "stats.read" permission (checked in route).
- */
-exports.getAdminOverview = async (req, res, next) => {
+exports.getSalonOverview = async (req, res, next) => {
   try {
-    // 1. Employees Count
-    // Count all EmployeeDetail records (active and inactive? usually active is more relevant for dashboard "current status", 
-    // but the previous frontend code counted total rows from `employees/query` which might default to all.
-    // However, for a high level dashboard, "Active" is usually implied. 
-    // Let's stick to ALL for now to match the "Total employees" label, or check if frontend had filters.
-    // Frontend code: api.post("/employees/query", { page: 1, limit: 1 })... total.
-    // Employee query defaults might return all. 
-    // I will count ALL to match "Total employees".
-    const employeesCount = await EmployeeDetail.count();
-
-    // 2. Companies Count
-    // Same logic.
-    const companiesCount = await Company.count();
-
-    // 3. Admins Count
-    // "Admins: role 'admin' OR Role.hierarchy_level <= 200, and no employee details"
-    const adminsCount = await User.count({
-      include: [
-        {
-          model: Role,
-          required: true,
-          where: {
-            [Op.or]: [
-              { name: { [Op.iLike]: '%admin%' } },
-              { hierarchy_level: { [Op.lte]: 200 } }
-            ]
-          }
-        },
-        {
-          model: EmployeeDetail,
-          as: 'employee_detail',
-          required: false
-        }
-      ],
-      where: {
-        '$employee_detail.id$': null
-      }
-    });
+    const [
+      totalSalons,
+      pendingApplications,
+      approvedSalons,
+      totalCustomers,
+      totalBookings,
+      pendingBookings,
+      completedBookings,
+    ] = await Promise.all([
+      Salon.count({ where: { status: 'ACTIVE' } }),
+      SalonApplication.count({ where: { application_status: 'PENDING_APPROVAL' } }),
+      Salon.count({ where: { status: 'ACTIVE' } }),
+      Customer.count({ where: { status: 'ACTIVE' } }),
+      Booking.count(),
+      Booking.count({ where: { booking_status: 'PENDING' } }),
+      Booking.count({ where: { booking_status: 'COMPLETED' } }),
+    ]);
 
     res.json({
-      employeesCount,
-      companiesCount,
-      adminsCount
+      totalSalons,
+      pendingApplications,
+      approvedSalons,
+      totalCustomers,
+      totalBookings,
+      pendingBookings,
+      completedBookings,
     });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.getCharts = async (req, res, next) => {
+  try {
+    const months = 6;
+    const salonGrowth = await sequelize.query(
+      `SELECT to_char(date_trunc('month', created_at), 'YYYY-MM') AS month, COUNT(*)::int AS count
+       FROM ${process.env.DB_SCHEMA || 'salon_booking_schema'}.salons
+       WHERE created_at >= NOW() - INTERVAL '${months} months'
+       GROUP BY 1 ORDER BY 1`,
+      { type: sequelize.QueryTypes.SELECT }
+    );
+
+    const customerGrowth = await sequelize.query(
+      `SELECT to_char(date_trunc('month', created_at), 'YYYY-MM') AS month, COUNT(*)::int AS count
+       FROM ${process.env.DB_SCHEMA || 'salon_booking_schema'}.customers
+       WHERE created_at >= NOW() - INTERVAL '${months} months'
+       GROUP BY 1 ORDER BY 1`,
+      { type: sequelize.QueryTypes.SELECT }
+    );
+
+    const bookingTrends = await sequelize.query(
+      `SELECT to_char(date_trunc('month', created_at), 'YYYY-MM') AS month, COUNT(*)::int AS count
+       FROM ${process.env.DB_SCHEMA || 'salon_booking_schema'}.bookings
+       WHERE created_at >= NOW() - INTERVAL '${months} months'
+       GROUP BY 1 ORDER BY 1`,
+      { type: sequelize.QueryTypes.SELECT }
+    );
+
+    res.json({ salonGrowth, customerGrowth, bookingTrends });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.getRecentActivity = async (req, res, next) => {
+  try {
+    const [newApplications, newBookings, newReviews] = await Promise.all([
+      SalonApplication.findAll({
+        where: { application_status: 'PENDING_APPROVAL' },
+        order: [['created_at', 'DESC']],
+        limit: 5,
+        include: [{ model: SalonOwner, as: 'owner', include: [{ model: User, as: 'user', attributes: ['name'] }] }],
+      }),
+      Booking.findAll({
+        order: [['created_at', 'DESC']],
+        limit: 5,
+        include: [
+          { model: Customer, as: 'customer', include: [{ model: User, as: 'user', attributes: ['name'] }] },
+          { model: Salon, as: 'salon', attributes: ['salon_name'] },
+        ],
+      }),
+      Review.findAll({
+        order: [['created_at', 'DESC']],
+        limit: 5,
+        include: [
+          { model: Salon, as: 'salon', attributes: ['salon_name'] },
+          { model: Customer, as: 'customer', include: [{ model: User, as: 'user', attributes: ['name'] }] },
+        ],
+      }),
+    ]);
+
+    res.json({ newApplications, newBookings, newReviews });
   } catch (err) {
     next(err);
   }

@@ -81,8 +81,8 @@ exports.changePassword = async (req, res) => {
 
   const { currentPassword, newPassword, confirmPassword } = req.body || {};
 
-  if (!currentPassword || !newPassword || !confirmPassword) {
-    return res.status(400).json({ message: 'currentPassword, newPassword and confirmPassword are required' });
+  if (!newPassword || !confirmPassword) {
+    return res.status(400).json({ message: 'newPassword and confirmPassword are required' });
   }
   if (newPassword !== confirmPassword) {
     return res.status(400).json({ message: 'New password and confirm password do not match' });
@@ -103,21 +103,21 @@ exports.changePassword = async (req, res) => {
       await t.rollback();
       return res.status(404).json({ message: 'User not found' });
     }
-    if (!user.password) {
-      await t.rollback();
-      return res.status(400).json({ message: 'Password change not supported for this account' });
-    }
-
-    const match = await bcrypt.compare(currentPassword, user.password);
-    if (!match) {
-      await t.rollback();
-      return res.status(401).json({ message: 'Current password is incorrect' });
-    }
-
-    const isSameAsOld = await bcrypt.compare(newPassword, user.password);
-    if (isSameAsOld) {
-      await t.rollback();
-      return res.status(400).json({ message: 'New password must be different from the current password' });
+    if (user.password) {
+      if (!currentPassword) {
+        await t.rollback();
+        return res.status(400).json({ message: 'currentPassword is required' });
+      }
+      const match = await bcrypt.compare(currentPassword, user.password);
+      if (!match) {
+        await t.rollback();
+        return res.status(401).json({ message: 'Current password is incorrect' });
+      }
+      const isSameAsOld = await bcrypt.compare(newPassword, user.password);
+      if (isSameAsOld) {
+        await t.rollback();
+        return res.status(400).json({ message: 'New password must be different from the current password' });
+      }
     }
 
     const salt = await bcrypt.genSalt(10);

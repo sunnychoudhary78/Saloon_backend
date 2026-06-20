@@ -16,6 +16,22 @@ function generateToken(user, roles = []) {
   );
 }
 
+function generateSignupToken(phone) {
+  return jwt.sign(
+    { phone, purpose: 'signup' },
+    process.env.JWT_SECRET,
+    { expiresIn: '15m' }
+  );
+}
+
+function verifySignupToken(token) {
+  const decoded = jwt.verify(token, process.env.JWT_SECRET);
+  if (decoded.purpose !== 'signup' || !decoded.phone) {
+    throw new Error('Invalid signup token');
+  }
+  return decoded;
+}
+
 async function loadUserWithRoles(userId) {
   return User.findByPk(userId, {
     include: [
@@ -75,6 +91,7 @@ function shapeUserResponse(user) {
     phone: user.phone,
     status: user.status,
     is_active: user.is_active,
+    has_password: Boolean(user.password),
     roles: roles.map((r) => ({ id: r.id, name: r.name, hierarchy_level: r.hierarchy_level })),
     permissions,
     created_at: user.created_at,
@@ -86,6 +103,8 @@ module.exports = {
   ADMIN_ROLES,
   MOBILE_ROLES,
   generateToken,
+  generateSignupToken,
+  verifySignupToken,
   loadUserWithRoles,
   getRoleNames,
   getUnionPermissions,

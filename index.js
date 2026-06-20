@@ -1,6 +1,9 @@
 const os = require('os');
 const app = require('./app');
 const { sequelize } = require('./models');
+const { initFirebaseAdmin } = require('./services/pushNotificationService');
+const { startAppointmentReminderJob } = require('./jobs/appointmentReminderJob');
+const { startNotificationCleanupJob } = require('./jobs/notificationCleanupJob');
 
 function getLanIPv4Addresses() {
   const addresses = [];
@@ -19,6 +22,9 @@ const startServer = async () => {
   try {
     await sequelize.authenticate();
     console.log('Database connected!');
+    initFirebaseAdmin();
+    startAppointmentReminderJob();
+    startNotificationCleanupJob();
     const env = (process.env.APP_ENV || process.env.NODE_ENV || 'development').toLowerCase();
     const { envSuffix } = require('./config/envSuffix');
     const suffix = envSuffix(env);

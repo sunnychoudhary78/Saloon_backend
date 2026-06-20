@@ -4,7 +4,7 @@ const AppError = require('../middlewares/AppError');
 const { salonApplicationRegistryByKey } = require('../config/columnRegistry');
 const { approveApplication, rejectApplication } = require('../services/salonApplicationService');
 
-const defaultColumns = ['salon_name', 'city', 'state', 'application_status', 'owner_name', 'created_at'];
+const defaultColumns = ['salon_name', 'application_type', 'city', 'state', 'application_status', 'owner_name', 'created_at'];
 
 exports.query = async (req, res, next) => {
   try {
@@ -14,6 +14,7 @@ exports.query = async (req, res, next) => {
     const where = {};
 
     if (req.body.application_status) where.application_status = req.body.application_status;
+    if (req.body.application_type) where.application_type = req.body.application_type;
     if (req.body.search) {
       where[Op.or] = [
         { salon_name: { [Op.iLike]: `%${req.body.search}%` } },

@@ -20,9 +20,21 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: false,
         defaultValue: 'PENDING',
       },
+      booking_type: {
+        type: DataTypes.ENUM('STANDARD', 'PREMIUM'),
+        allowNull: false,
+        defaultValue: 'STANDARD',
+      },
+      premium_amount: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+      premium_payment_status: {
+        type: DataTypes.ENUM('NONE', 'PENDING', 'PAID', 'FAILED'),
+        allowNull: false,
+        defaultValue: 'NONE',
+      },
       rejection_reason: { type: DataTypes.TEXT, allowNull: true },
       responded_by: { type: DataTypes.UUID, allowNull: true },
       responded_at: { type: DataTypes.DATE, allowNull: true },
+      reminder_sent_at: { type: DataTypes.DATE, allowNull: true },
       ...baseFields(DataTypes),
     },
     {
@@ -37,6 +49,7 @@ module.exports = (sequelize, DataTypes) => {
     Booking.belongsTo(models.Service, { foreignKey: 'service_id', as: 'service' });
     Booking.belongsTo(models.User, { foreignKey: 'responded_by', as: 'responder' });
     Booking.hasOne(models.Review, { foreignKey: 'booking_id', as: 'review' });
+    Booking.hasMany(models.Payment, { foreignKey: 'booking_id', as: 'payments' });
   };
 
   return Booking;

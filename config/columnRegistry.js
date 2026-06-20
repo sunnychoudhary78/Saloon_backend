@@ -10,6 +10,8 @@ const salonOwnerRegistry = [
 
 const salonApplicationRegistry = [
   { key: 'salon_name', label: 'Salon Name', path: 'salon_name', type: 'string' },
+  { key: 'phone', label: 'Phone', path: 'phone', type: 'string' },
+  { key: 'application_type', label: 'Request Type', path: 'application_type', type: 'string' },
   { key: 'city', label: 'City', path: 'city', type: 'string' },
   { key: 'state', label: 'State', path: 'state', type: 'string' },
   { key: 'application_status', label: 'Status', path: 'application_status', type: 'string' },
@@ -19,9 +21,11 @@ const salonApplicationRegistry = [
 
 const salonRegistry = [
   { key: 'salon_name', label: 'Salon Name', path: 'salon_name', type: 'string' },
+  { key: 'phone', label: 'Phone', path: 'phone', type: 'string' },
   { key: 'city', label: 'City', path: 'city', type: 'string' },
   { key: 'state', label: 'State', path: 'state', type: 'string' },
   { key: 'status', label: 'Status', path: 'status', type: 'string' },
+  { key: 'is_featured', label: 'Featured', path: 'is_featured', type: 'boolean' },
   { key: 'owner_name', label: 'Owner', path: 'owner.user.name', type: 'string' },
   { key: 'created_at', label: 'Created At', path: 'created_at', type: 'date' },
 ];
@@ -38,6 +42,7 @@ const serviceRegistry = [
   { key: 'salon_name', label: 'Salon', path: 'salon.salon_name', type: 'string' },
   { key: 'category_name', label: 'Category', path: 'category.name', type: 'string' },
   { key: 'price', label: 'Price', path: 'price', type: 'number' },
+  { key: 'discount_price', label: 'Discount Price', path: 'discount_price', type: 'number' },
   { key: 'duration_minutes', label: 'Duration (min)', path: 'duration_minutes', type: 'number' },
   { key: 'status', label: 'Status', path: 'status', type: 'string' },
 ];

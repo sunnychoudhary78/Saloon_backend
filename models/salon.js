@@ -19,8 +19,11 @@ module.exports = (sequelize, DataTypes) => {
       longitude: { type: DataTypes.DECIMAL(11, 8), allowNull: true },
       cover_image: { type: DataTypes.STRING, allowNull: true },
       gallery_images: { type: DataTypes.JSONB, allowNull: false, defaultValue: [] },
-      opening_time: { type: DataTypes.TIME, allowNull: true },
-      closing_time: { type: DataTypes.TIME, allowNull: true },
+      phone: { type: DataTypes.STRING, allowNull: false },
+      opening_time: { type: DataTypes.TIME, allowNull: false },
+      closing_time: { type: DataTypes.TIME, allowNull: false },
+      is_featured: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+      featured_sort_order: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
       status: {
         type: DataTypes.ENUM('ACTIVE', 'SUSPENDED', 'CLOSED'),
         allowNull: false,
@@ -40,6 +43,7 @@ module.exports = (sequelize, DataTypes) => {
     Salon.hasMany(models.Service, { foreignKey: 'salon_id', as: 'services' });
     Salon.hasMany(models.Booking, { foreignKey: 'salon_id', as: 'bookings' });
     Salon.hasMany(models.Review, { foreignKey: 'salon_id', as: 'reviews' });
+    Salon.hasMany(models.Payment, { foreignKey: 'salon_id', as: 'payments' });
   };
 
   return Salon;

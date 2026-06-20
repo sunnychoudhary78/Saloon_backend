@@ -1,5 +1,26 @@
 const { SalonApplication, Salon, sequelize } = require('../models');
 const { logAudit } = require('./auditService');
+const { ensureApplicationCoordinates } = require('./geocodingService');
+
+const salonFieldsFromApplication = (application, coordsOverride = null) => ({
+  salon_name: application.salon_name,
+  description: application.description,
+  address: application.address,
+  city: application.city,
+  state: application.state,
+  latitude: coordsOverride?.latitude ?? application.latitude,
+  longitude: coordsOverride?.longitude ?? application.longitude,
+  cover_image: application.cover_image,
+  gallery_images: application.gallery_images,
+  phone: application.phone,
+  opening_time: application.opening_time,
+  closing_time: application.closing_time,
+});
+
+function normalizeApplicationType(type) {
+  if (type === 'CLOSE') return 'DEACTIVATE';
+  return type || 'CREATE';
+}
 
 async function approveApplication(applicationId, reviewerId, req) {
   const t = await sequelize.transaction();
@@ -16,27 +37,74 @@ async function approveApplication(applicationId, reviewerId, req) {
     application.updated_by = reviewerId;
     await application.save({ transaction: t });
 
-    const salon = await Salon.create(
-      {
-        owner_id: application.owner_id,
-        application_id: application.id,
-        salon_name: application.salon_name,
-        description: application.description,
-        address: application.address,
-        city: application.city,
-        state: application.state,
-        latitude: application.latitude,
-        longitude: application.longitude,
-        cover_image: application.cover_image,
-        gallery_images: application.gallery_images,
-        opening_time: application.opening_time,
-        closing_time: application.closing_time,
-        status: 'ACTIVE',
-        created_by: reviewerId,
-        updated_by: reviewerId,
-      },
-      { transaction: t }
-    );
+    const type = normalizeApplicationType(application.application_type);
+    let salon;
+    let salonCoords = null;
+
+    if (type === 'CREATE' || type === 'UPDATE') {
+      salonCoords = await ensureApplicationCoordinates(application);
+      if (!salonCoords) {
+        throw new Error('Salon location is required — set coordinates or use a valid address');
+      }
+    }
+
+    if (type === 'CREATE') {
+      salon = await Salon.create(
+        {
+          owner_id: application.owner_id,
+          application_id: application.id,
+          ...salonFieldsFromApplication(application, salonCoords),
+          status: 'ACTIVE',
+          is_active: true,
+          created_by: reviewerId,
+          updated_by: reviewerId,
+        },
+        { transaction: t }
+      );
+    } else if (type === 'UPDATE') {
+      salon = await Salon.findByPk(application.salon_id, { transaction: t });
+      if (!salon) throw new Error('Target salon not found');
+      if (salon.owner_id !== application.owner_id) {
+        throw new Error('Application does not match salon owner');
+      }
+      await salon.update(
+        {
+          ...salonFieldsFromApplication(application, salonCoords),
+          updated_by: reviewerId,
+        },
+        { transaction: t }
+      );
+    } else if (type === 'DEACTIVATE') {
+      salon = await Salon.findByPk(application.salon_id, { transaction: t });
+      if (!salon) throw new Error('Target salon not found');
+      if (salon.owner_id !== application.owner_id) {
+        throw new Error('Application does not match salon owner');
+      }
+      await salon.update(
+        {
+          status: 'CLOSED',
+          is_active: false,
+          updated_by: reviewerId,
+        },
+        { transaction: t }
+      );
+    } else if (type === 'ACTIVATE') {
+      salon = await Salon.findByPk(application.salon_id, { transaction: t });
+      if (!salon) throw new Error('Target salon not found');
+      if (salon.owner_id !== application.owner_id) {
+        throw new Error('Application does not match salon owner');
+      }
+      await salon.update(
+        {
+          status: 'ACTIVE',
+          is_active: true,
+          updated_by: reviewerId,
+        },
+        { transaction: t }
+      );
+    } else {
+      throw new Error(`Unknown application type: ${type}`);
+    }
 
     await t.commit();
 
@@ -45,7 +113,7 @@ async function approveApplication(applicationId, reviewerId, req) {
       action: 'salonApplication.approve',
       entityType: 'SalonApplication',
       entityId: applicationId,
-      newValues: { salon_id: salon.id },
+      newValues: { salon_id: salon.id, application_type: type },
       req,
     });
 
@@ -82,4 +150,4 @@ async function rejectApplication(applicationId, reviewerId, rejectionReason, req
   return application;
 }
 
-module.exports = { approveApplication, rejectApplication };
+module.exports = { approveApplication, rejectApplication, normalizeApplicationType };

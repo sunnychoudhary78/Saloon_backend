@@ -10,17 +10,21 @@
     "db:migrate": "npx sequelize-cli db:migrate",
     "db:seed": "npx sequelize-cli db:seed:all",
     "db:reset": "node scripts/db-reset.js",
-    "db:verify": "node scripts/verify-db.js"
+    "db:verify": "node scripts/verify-db.js",
+    "perf:baseline": "node scripts/perf-baseline.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "axios": "^1.17.0",
     "bcryptjs": "^3.0.2",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
+    "exceljs": "^4.4.0",
     "express": "^5.1.0",
+    "firebase-admin": "^13.0.2",
     "joi": "^18.0.1",
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.0.2",
@@ -31,9 +35,10 @@
     "pg": "^8.16.3",
     "pg-hstore": "^2.3.4",
     "pino": "^10.1.0",
+    "razorpay": "^2.9.6",
     "sequelize": "^6.37.7",
-    "uuid": "^8.3.2",
-    "exceljs": "^4.4.0"
+    "sharp": "^0.33.5",
+    "uuid": "^8.3.2"
   },
   "devDependencies": {
     "morgan": "^1.10.1",

@@ -8,6 +8,8 @@ const ctrl = require('../controllers/salonController');
 router.post('/query', authMiddleware, permissionMiddleware('salon.read'), asyncHandler(ctrl.query));
 router.get('/:id', authMiddleware, permissionMiddleware('salon.read'), asyncHandler(ctrl.getById));
 router.put('/:id', authMiddleware, permissionMiddleware('salon.update'), asyncHandler(ctrl.update));
+router.patch('/:id/feature', authMiddleware, permissionMiddleware('salon.update'), asyncHandler(ctrl.setFeatured));
+router.patch('/:id/status', authMiddleware, permissionMiddleware('salon.update'), asyncHandler(ctrl.setStatus));
 router.patch('/:id/suspend', authMiddleware, permissionMiddleware('salon.suspend'), asyncHandler(ctrl.suspend));
 router.patch('/:id/close', authMiddleware, permissionMiddleware('salon.close'), asyncHandler(ctrl.close));
 

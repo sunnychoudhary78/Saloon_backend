@@ -9,6 +9,12 @@ module.exports = (sequelize, DataTypes) => {
         primaryKey: true,
       },
       owner_id: { type: DataTypes.UUID, allowNull: false },
+      salon_id: { type: DataTypes.UUID, allowNull: true },
+      application_type: {
+        type: DataTypes.ENUM('CREATE', 'UPDATE', 'CLOSE', 'DEACTIVATE', 'ACTIVATE'),
+        allowNull: false,
+        defaultValue: 'CREATE',
+      },
       salon_name: { type: DataTypes.STRING, allowNull: false },
       description: { type: DataTypes.TEXT, allowNull: true },
       address: { type: DataTypes.TEXT, allowNull: false },
@@ -18,8 +24,9 @@ module.exports = (sequelize, DataTypes) => {
       longitude: { type: DataTypes.DECIMAL(11, 8), allowNull: true },
       cover_image: { type: DataTypes.STRING, allowNull: true },
       gallery_images: { type: DataTypes.JSONB, allowNull: false, defaultValue: [] },
-      opening_time: { type: DataTypes.TIME, allowNull: true },
-      closing_time: { type: DataTypes.TIME, allowNull: true },
+      phone: { type: DataTypes.STRING, allowNull: false },
+      opening_time: { type: DataTypes.TIME, allowNull: false },
+      closing_time: { type: DataTypes.TIME, allowNull: false },
       application_status: {
         type: DataTypes.ENUM('PENDING_APPROVAL', 'APPROVED', 'REJECTED'),
         allowNull: false,
@@ -38,6 +45,7 @@ module.exports = (sequelize, DataTypes) => {
 
   SalonApplication.associate = (models) => {
     SalonApplication.belongsTo(models.SalonOwner, { foreignKey: 'owner_id', as: 'owner' });
+    SalonApplication.belongsTo(models.Salon, { foreignKey: 'salon_id', as: 'targetSalon' });
     SalonApplication.belongsTo(models.User, { foreignKey: 'reviewed_by', as: 'reviewer' });
     SalonApplication.hasOne(models.Salon, { foreignKey: 'application_id', as: 'salon' });
   };

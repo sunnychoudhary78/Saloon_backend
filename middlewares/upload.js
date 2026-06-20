@@ -55,3 +55,31 @@ const uploadCompanyLogo = multer({
 });
 
 module.exports.uploadCompanyLogo = uploadCompanyLogo;
+
+const salonImageStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const dir = path.join(__dirname, "../uploads/salons");
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch (_) {}
+    cb(null, dir);
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    const random = Math.random().toString(36).substring(2, 10);
+    const timestamp = Date.now();
+    cb(null, `salon-${timestamp}-${random}${ext}`);
+  },
+});
+
+const uploadSalonImages = multer({
+  storage: salonImageStorage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = ["image/png", "image/jpeg", "image/jpg"];
+    if (allowedTypes.includes(file.mimetype)) cb(null, true);
+    else cb(new Error("Only PNG, JPEG, and JPG images are allowed"));
+  },
+});
+
+module.exports.uploadSalonImages = uploadSalonImages;

@@ -19,11 +19,21 @@ app.use(express.json());
 const corsOptions = {
   origin: (origin, callback) => callback(null, true),
   credentials: true,
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-client-type', 'x-request-id'],
 };
 app.use(cors(corsOptions));
 app.use(morgan('dev'));
 
-app.use('/api/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use(
+  '/api/uploads',
+  express.static(path.join(__dirname, 'uploads'), {
+    maxAge: '365d',
+    immutable: true,
+    setHeaders(res) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    },
+  }),
+);
 
 // Auth & access control
 app.use('/api/auth', authRoutes);

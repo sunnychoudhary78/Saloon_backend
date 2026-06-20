@@ -4,7 +4,15 @@ const AppError = require('../middlewares/AppError');
 const { salonRegistryByKey } = require('../config/columnRegistry');
 const { logAudit } = require('../services/auditService');
 
-const defaultColumns = ['salon_name', 'city', 'state', 'status', 'owner_name', 'created_at'];
+const defaultColumns = ['salon_name', 'city', 'state', 'status', 'is_featured', 'owner_name', 'created_at'];
+const VALID_SALON_STATUSES = ['ACTIVE', 'SUSPENDED', 'CLOSED'];
+
+function isStatusNoOp(row, status) {
+  if (row.status !== status) return false;
+  if (status === 'ACTIVE') return row.is_active === true;
+  if (status === 'CLOSED') return row.is_active === false;
+  return true;
+}
 
 exports.query = async (req, res, next) => {
   try {
@@ -14,6 +22,9 @@ exports.query = async (req, res, next) => {
     const where = {};
 
     if (req.body.status) where.status = req.body.status;
+    if (req.body.is_featured !== undefined) {
+      where.is_featured = req.body.is_featured === true || req.body.is_featured === 'true';
+    }
     if (req.body.search) {
       where[Op.or] = [
         { salon_name: { [Op.iLike]: `%${req.body.search}%` } },
@@ -73,7 +84,7 @@ exports.update = async (req, res, next) => {
     const row = await Salon.findByPk(req.params.id);
     if (!row) throw new AppError('Salon not found', 404);
 
-    const fields = ['salon_name', 'description', 'address', 'city', 'state', 'latitude', 'longitude', 'cover_image', 'gallery_images', 'opening_time', 'closing_time', 'status'];
+    const fields = ['salon_name', 'description', 'address', 'city', 'state', 'latitude', 'longitude', 'cover_image', 'gallery_images', 'phone', 'opening_time', 'closing_time', 'status', 'is_featured', 'featured_sort_order'];
     for (const f of fields) {
       if (req.body[f] !== undefined) row[f] = req.body[f];
     }
@@ -81,6 +92,67 @@ exports.update = async (req, res, next) => {
     await row.save();
 
     await logAudit({ userId: req.user.id, action: 'salon.update', entityType: 'Salon', entityId: row.id, req });
+    res.json({ data: row });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.setFeatured = async (req, res, next) => {
+  try {
+    const row = await Salon.findByPk(req.params.id);
+    if (!row) throw new AppError('Salon not found', 404);
+
+    row.is_featured = req.body.is_featured === true || req.body.is_featured === 'true';
+    if (req.body.featured_sort_order !== undefined) {
+      row.featured_sort_order = parseInt(req.body.featured_sort_order, 10) || 0;
+    }
+    row.updated_by = req.user.id;
+    await row.save();
+
+    await logAudit({ userId: req.user.id, action: 'salon.feature', entityType: 'Salon', entityId: row.id, req });
+    res.json({ data: row });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.setStatus = async (req, res, next) => {
+  try {
+    const row = await Salon.findByPk(req.params.id);
+    if (!row) throw new AppError('Salon not found', 404);
+
+    const status = req.body.status;
+    if (!VALID_SALON_STATUSES.includes(status)) {
+      throw new AppError(`status must be one of: ${VALID_SALON_STATUSES.join(', ')}`, 400);
+    }
+
+    if (isStatusNoOp(row, status)) {
+      return res.json({ data: row });
+    }
+
+    const oldValues = { status: row.status, is_active: row.is_active };
+
+    row.status = status;
+    if (status === 'ACTIVE') {
+      row.is_active = true;
+    } else if (status === 'CLOSED') {
+      row.is_active = false;
+    }
+
+    row.updated_by = req.user.id;
+    await row.save();
+
+    await logAudit({
+      userId: req.user.id,
+      action: 'salon.status',
+      entityType: 'Salon',
+      entityId: row.id,
+      oldValues,
+      newValues: { status: row.status, is_active: row.is_active },
+      req,
+    });
+
     res.json({ data: row });
   } catch (err) {
     next(err);

@@ -10,7 +10,7 @@ module.exports = (sequelize, DataTypes) => {
       },
       name: { type: DataTypes.STRING, allowNull: false },
       phone: { type: DataTypes.STRING, allowNull: true, unique: true },
-      email: { type: DataTypes.STRING, allowNull: false, unique: true },
+      email: { type: DataTypes.STRING, allowNull: true, unique: true },
       password: { type: DataTypes.STRING, allowNull: true },
       status: {
         type: DataTypes.ENUM('ACTIVE', 'BLOCKED'),
@@ -37,6 +37,8 @@ module.exports = (sequelize, DataTypes) => {
     User.hasMany(models.TableConfig, { foreignKey: 'user_id' });
     User.hasMany(models.SavedFilter, { foreignKey: 'user_id' });
     User.hasMany(models.Draft, { foreignKey: 'user_id' });
+    User.hasMany(models.DeviceToken, { foreignKey: 'user_id', as: 'device_tokens' });
+    User.hasMany(models.UserNotification, { foreignKey: 'user_id', as: 'notifications' });
   };
 
   return User;

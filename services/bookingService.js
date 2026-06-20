@@ -1,7 +1,7 @@
 const { Booking, sequelize } = require('../models');
 const { Op } = require('sequelize');
 
-async function generateBookingNumber() {
+async function generateBookingNumber(transaction = null) {
   const today = new Date();
   const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '');
   const prefix = `BK-${dateStr}-`;
@@ -9,6 +9,8 @@ async function generateBookingNumber() {
   const last = await Booking.findOne({
     where: { booking_number: { [Op.like]: `${prefix}%` } },
     order: [['booking_number', 'DESC']],
+    transaction,
+    lock: transaction ? transaction.LOCK.UPDATE : undefined,
   });
 
   let seq = 1;

@@ -1,200 +1,244 @@
 // =============================================================================
-// UAT VPS DEPLOYMENT — run every step in order
+// SALON BOOKING — LOCAL DEVELOPMENT SETUP
+// Run every step in order for a fresh machine.
 // =============================================================================
 //
-// Prerequisites on VPS:
+// Project folders:
+//   backend-template/   Express + Sequelize API
+//   frontend-template/  React + Vite admin panel
+//
+// Prerequisites:
 //   - Node.js 18+ and npm
 //   - PostgreSQL 13+
-//   - Project copied/cloned to the server (e.g. /var/www/salon-backend)
-//   - Firewall allows port 3012 (UAT API)
 //
-// Values below match backend-template/.env (UAT section).
-// Change passwords before going live.
+// IMPORTANT: .env files are gitignored. You must create them manually using
+// the templates in Steps 2 and 6 below.
 
 
-// -----------------------------------------------------------------------------
+// =============================================================================
 // STEP 1 — PostgreSQL setup (run as postgres superuser)
-// -----------------------------------------------------------------------------
+// =============================================================================
+//
+// Windows (PowerShell) or Linux/macOS:
 
 psql -U postgres -h localhost -p 5432
 
--- 1.1 Create UAT database user
-CREATE USER salonbookinguser_uat WITH PASSWORD 'SalonBooking@123';
+-- 1.1 Create development database user
+CREATE USER salonbookinguser WITH PASSWORD 'SalonBooking@123';
 
--- 1.2 Create UAT database
-CREATE DATABASE salon_booking_uat_db;
+-- 1.2 Create development database
+CREATE DATABASE salon_booking_db;
 
--- 1.3 Restrict access to UAT user only
-REVOKE CONNECT ON DATABASE salon_booking_uat_db FROM PUBLIC;
-GRANT CONNECT ON DATABASE salon_booking_uat_db TO salonbookinguser_uat;
+-- 1.3 Restrict access to app user only
+REVOKE CONNECT ON DATABASE salon_booking_db FROM PUBLIC;
+GRANT CONNECT ON DATABASE salon_booking_db TO salonbookinguser;
 
--- 1.4 Connect to the UAT database
-\c salon_booking_uat_db
+-- 1.4 Connect to the development database
+\c salon_booking_db
 
 -- 1.5 Create application schema
-CREATE SCHEMA IF NOT EXISTS salon_booking_schema AUTHORIZATION salonbookinguser_uat;
+CREATE SCHEMA IF NOT EXISTS salon_booking_schema AUTHORIZATION salonbookinguser;
 
 -- 1.6 Schema permissions
 REVOKE ALL ON SCHEMA salon_booking_schema FROM PUBLIC;
-GRANT USAGE ON SCHEMA salon_booking_schema TO salonbookinguser_uat;
-GRANT CREATE ON SCHEMA salon_booking_schema TO salonbookinguser_uat;
+GRANT USAGE ON SCHEMA salon_booking_schema TO salonbookinguser;
+GRANT CREATE ON SCHEMA salon_booking_schema TO salonbookinguser;
 
--- 1.7 Default privileges for tables/sequences created by UAT user
-ALTER DEFAULT PRIVILEGES FOR ROLE salonbookinguser_uat IN SCHEMA salon_booking_schema
-  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO salonbookinguser_uat;
+-- 1.7 Default privileges for tables/sequences created by app user
+ALTER DEFAULT PRIVILEGES FOR ROLE salonbookinguser IN SCHEMA salon_booking_schema
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO salonbookinguser;
 
-ALTER DEFAULT PRIVILEGES FOR ROLE salonbookinguser_uat IN SCHEMA salon_booking_schema
-  GRANT USAGE, SELECT ON SEQUENCES TO salonbookinguser_uat;
+ALTER DEFAULT PRIVILEGES FOR ROLE salonbookinguser IN SCHEMA salon_booking_schema
+  GRANT USAGE, SELECT ON SEQUENCES TO salonbookinguser;
 
--- 1.8 Default search path for UAT user
-ALTER ROLE salonbookinguser_uat SET search_path = 'salon_booking_schema', public;
+-- 1.8 Default search path for app user
+ALTER ROLE salonbookinguser SET search_path = 'salon_booking_schema', public;
 
 -- 1.9 Required extensions (must run as postgres superuser)
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- 1.10 Final grants
-GRANT CONNECT ON DATABASE salon_booking_uat_db TO salonbookinguser_uat;
-GRANT USAGE, CREATE ON SCHEMA salon_booking_schema TO salonbookinguser_uat;
-GRANT ALL PRIVILEGES ON DATABASE salon_booking_uat_db TO salonbookinguser_uat;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA salon_booking_schema TO salonbookinguser_uat;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA salon_booking_schema TO salonbookinguser_uat;
+GRANT CONNECT ON DATABASE salon_booking_db TO salonbookinguser;
+GRANT USAGE, CREATE ON SCHEMA salon_booking_schema TO salonbookinguser;
+GRANT ALL PRIVILEGES ON DATABASE salon_booking_db TO salonbookinguser;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA salon_booking_schema TO salonbookinguser;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA salon_booking_schema TO salonbookinguser;
 
 \q
 
 
-// -----------------------------------------------------------------------------
-// STEP 2 — Configure .env on the VPS
-// -----------------------------------------------------------------------------
+// =============================================================================
+// STEP 2 — Backend .env (create backend-template/.env)
+// =============================================================================
 //
-// Edit backend-template/.env and set at minimum:
+// Copy the block below into backend-template/.env and adjust secrets as needed.
+// Do not commit this file to git.
 
-APP_ENV=uat
+JWT_SECRET=salon_booking_jwt_secret_change_in_prod
+
+APP_ENV=development
 
 DB_SCHEMA=salon_booking_schema
 
-DB_HOST_UAT=localhost
-DB_NAME_UAT=salon_booking_uat_db
-DB_USER_UAT=salonbookinguser_uat
-DB_PASSWORD_UAT=SalonBooking@123
-DB_PORT_UAT=5432
+DB_HOST_DEV=localhost
+DB_NAME_DEV=salon_booking_db
+DB_USER_DEV=salonbookinguser
+DB_PASSWORD_DEV=SalonBooking@123
+DB_PORT_DEV=5432
 
-PORT_UAT=3012
+PORT_DEV=3011
 
-JWT_SECRET=change_this_uat_jwt_secret
 UPLOAD_PATH=uploads
 SOCKET_CORS_ORIGIN=*
 
+SEED_API_BASE=http://localhost:3011/api
 
-// -----------------------------------------------------------------------------
-// STEP 3 — Install dependencies (from backend-template directory)
-// -----------------------------------------------------------------------------
+EMAIL_USER=your_email@gmail.com
+EMAIL_PASS=your_email_app_password
+
+RAZORPAY_KEY_ID=
+RAZORPAY_KEY_SECRET=
+
+GOOGLE_MAPS_API_KEY=
+
+// Optional — push notifications (backend still starts if omitted)
+// FIREBASE_SERVICE_ACCOUNT_PATH=path/to/firebase-service-account.json
+//
+// Notes:
+//   - SEED_API_BASE: use http://localhost:3011/api for local admin panel.
+//     Change to your LAN IP (e.g. http://192.168.x.x:3011/api) only if you
+//     need seeded salon images reachable from a phone on the same network.
+//   - Leave Razorpay/email empty for general local UI testing.
+
+
+// =============================================================================
+// STEP 3 — Backend install and database setup
+// =============================================================================
 
 cd backend-template
 npm install
+npm run db:migrate
+npm run db:seed
+npm run db:verify
 
-
-// -----------------------------------------------------------------------------
-// STEP 4 — Run migrations (must use NODE_ENV=uat to match APP_ENV=uat)
-// -----------------------------------------------------------------------------
-
-NODE_ENV=uat npm run db:migrate
-
-// Windows PowerShell equivalent:
-// $env:NODE_ENV="uat"; npm run db:migrate
-
-
-// -----------------------------------------------------------------------------
-// STEP 5 — Run seeders
-// -----------------------------------------------------------------------------
-
-NODE_ENV=uat npm run db:seed
-
-// Windows PowerShell equivalent:
-// $env:NODE_ENV="uat"; npm run db:seed
-
-
-// -----------------------------------------------------------------------------
-// STEP 6 — Verify database (optional but recommended)
-// -----------------------------------------------------------------------------
-
-APP_ENV=uat npm run db:verify
-
-// Expected: 5 migrations listed, ~54 permissions, super admin role SUPER_ADMIN
-
-
-// -----------------------------------------------------------------------------
-// STEP 7 — Start the API server
-// -----------------------------------------------------------------------------
-
-APP_ENV=uat npm start
-
-// API will listen on http://0.0.0.0:3012/api
-// Test: curl http://localhost:3012/api  (or your VPS IP)
-
-
-// -----------------------------------------------------------------------------
-// STEP 8 — Point clients to UAT
-// -----------------------------------------------------------------------------
+// db:verify expected: migrations listed, ~54 permissions, super admin role SUPER_ADMIN
 //
-// Flutter (saloon_booking/lib/core/config/app_config.dart):
-//   baseUrl = 'http://<VPS_IP>:3012/api'
+// Migrations use APP_ENV=development by default (no NODE_ENV override needed).
+
+
+// =============================================================================
+// STEP 4 — Start the backend API
+// =============================================================================
+
+npm start
+
+// Auto-reload during development:
+// npm run dev
 //
-// Frontend (.env):
-//   VITE_BASE_URL=http://<VPS_IP>:3012/api
+// API base URL:  http://localhost:3011/api
+// Quick test:    open http://localhost:3011/api in a browser
+//                or run: curl http://localhost:3011/api
 
 
-// -----------------------------------------------------------------------------
-// Default super admin (created by seeders — change password after first login)
-// -----------------------------------------------------------------------------
+// =============================================================================
+// STEP 5 — Default super admin (created by seeders)
+// =============================================================================
 //
 // Email:    superadmin@example.com
 // Password: SuperAdmin123!
+//
+// Change this password after first login.
 
 
 // =============================================================================
-// UAT SCHEMA RESET — only when migrations/seeders change (WIPES ALL UAT DATA)
+// STEP 6 — Frontend .env (create frontend-template/.env)
 // =============================================================================
+//
+// Copy the block below into frontend-template/.env.
+// VITE_BASE_URL must match the backend port from Step 2 (3011).
+
+VITE_BASE_URL=http://localhost:3011/api
+VITE_FRONTEND_BASE_PATH=/
+VITE_OUT_DIR=dist
+
+
+// =============================================================================
+// STEP 7 — Frontend install and run
+// =============================================================================
+//
+// Keep the backend running (Step 4) in a separate terminal.
+
+cd frontend-template
+npm install
+npm run dev
+
+// Dev UI:  http://localhost:5173  (Vite default; --host allows LAN access)
+// Login:   use super admin credentials from Step 5
+//
+// CORS: backend allows all origins — no extra config needed for local frontend.
+
+
+// =============================================================================
+// STEP 8 — Optional integrations
+// =============================================================================
+//
+// Email (nodemailer):
+//   Required only for password-reset / outbound mail features.
+//   App runs with placeholder EMAIL_USER / EMAIL_PASS values.
+//
+// Razorpay:
+//   Required only for payment flows. Leave RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET
+//   empty for general local UI testing.
+//
+// Firebase push notifications:
+//   Set FIREBASE_SERVICE_ACCOUNT_PATH in backend .env only if testing push.
+//   Backend logs a warning and continues if this is not set.
+
+
+// =============================================================================
+// TROUBLESHOOTING
+// =============================================================================
+//
+// "Unable to connect to DB"
+//   - Confirm PostgreSQL service is running.
+//   - Verify backend .env DB_*_DEV values match Step 1 (user, password, db name).
+//   - Re-run Step 1 if the database or user was never created.
+//
+// "Port 3011 already in use"
+//   - Stop the other process using port 3011, or change PORT_DEV in .env.
+//
+// Frontend cannot reach API
+//   - Confirm backend is running and VITE_BASE_URL is http://localhost:3011/api
+//   - Restart frontend dev server after changing frontend .env
+//
+// Missing .env
+//   - Both backend-template/.env and frontend-template/.env must exist (Step 2 & 6).
+
+
+// =============================================================================
+// DEV SCHEMA RESET (WIPES ALL LOCAL DATA)
+// =============================================================================
+//
+// Use only when migrations/seeders change during development.
 //
 // Option A — manual SQL reset + migrate/seed (recommended; extensions stay intact):
 //
-//   psql -U postgres -h localhost -d salon_booking_uat_db
+//   psql -U postgres -h localhost -d salon_booking_db
 //   DROP SCHEMA IF EXISTS salon_booking_schema CASCADE;
-//   CREATE SCHEMA salon_booking_schema AUTHORIZATION salonbookinguser_uat;
-//   GRANT USAGE ON SCHEMA salon_booking_schema TO salonbookinguser_uat;
-//   GRANT CREATE ON SCHEMA salon_booking_schema TO salonbookinguser_uat;
+//   CREATE SCHEMA salon_booking_schema AUTHORIZATION salonbookinguser;
+//   GRANT USAGE ON SCHEMA salon_booking_schema TO salonbookinguser;
+//   GRANT CREATE ON SCHEMA salon_booking_schema TO salonbookinguser;
 //   \q
 //
-//   NODE_ENV=uat npm run db:migrate
-//   NODE_ENV=uat npm run db:seed
+//   cd backend-template
+//   npm run db:migrate
+//   npm run db:seed
 //
-// Option B — one command (requires APP_ENV=uat in .env):
+// Option B — one command (requires APP_ENV=development in backend .env):
 //
-//   APP_ENV=uat npm run db:reset
+//   cd backend-template
+//   npm run db:reset
 //
 // Note: db:reset tries CREATE EXTENSION as the app user and may fail if
 // extensions were not already created by postgres in Step 1.9.
-
-
-// =============================================================================
-// LOCAL DEVELOPMENT (reference)
-// =============================================================================
-//
-// PostgreSQL: use salon_booking_db + salonbookinguser (see legacy steps below)
-// .env:       APP_ENV=development
-// Migrate:    npm run db:migrate          (defaults to NODE_ENV=development)
-// Seed:       npm run db:seed
-// Start:      npm start                   (port 3011)
-
-
-// =============================================================================
-// PRODUCTION (future — when ready)
-// =============================================================================
-//
-// .env:       APP_ENV=production
-// PostgreSQL: salon_booking_prod_db + salonbookinguser (create like UAT steps)
-// Migrate:    NODE_ENV=production npm run db:migrate
-// Seed:       NODE_ENV=production npm run db:seed
-// Start:      APP_ENV=production npm start   (port 3013)
-//
-// Never run db:reset on production with real data.

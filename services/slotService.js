@@ -444,7 +444,7 @@ async function assertSlotBookable(salonId, date, slotStart, { isPremium = false 
   };
 }
 
-async function assertAdditionalServiceBookable(salonId, date, slotStart, serviceId, customerId) {
+async function assertAdditionalServiceBookable(salonId, date, slotStart, serviceId, customerId, options = {}) {
   const normalized = normalizeSlotStart(slotStart);
   if (!normalized) throw new AppError('booking_time must be on the hour (e.g. 10:00)', 400);
 
@@ -457,6 +457,7 @@ async function assertAdditionalServiceBookable(salonId, date, slotStart, service
       customer_id: customerId,
       booking_status: { [Op.in]: ACTIVE_BOOKING_STATUSES },
     },
+    transaction: options.transaction,
   });
 
   if (existing) {

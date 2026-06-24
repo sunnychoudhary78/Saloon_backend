@@ -82,19 +82,24 @@ async function sendToTokens(tokens, payload) {
   if (!msg || !tokens.length) return { successCount: 0, failureCount: 0 };
 
   const { notification, data } = payload;
+  // Send a data-only message so the client always renders the notification via
+  // its local-notification path. This avoids the duplicate notifications that
+  // happen when FCM auto-displays the `notification` payload AND the app shows
+  // its own local notification, and guarantees the data (bookingId, etc.) is
+  // available for deep-linking in both foreground and background.
   const stringData = Object.fromEntries(
-    Object.entries(data || {}).map(([k, v]) => [k, String(v)]),
+    Object.entries({
+      ...(data || {}),
+      title: notification?.title || '',
+      body: notification?.body || '',
+    }).map(([k, v]) => [k, String(v)]),
   );
 
   const response = await msg.sendEachForMulticast({
     tokens,
-    notification,
     data: stringData,
     android: {
       priority: 'high',
-      notification: {
-        channelId: 'catchy_bookings',
-      },
     },
   });
 

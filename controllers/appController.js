@@ -37,7 +37,8 @@ const {
   notifyNewBooking,
   notifyBookingConfirmed,
   notifyBookingCancelledForOwner,
-  notifyBookingCancelledForCustomer,
+  notifyBookingRejected,
+  notifyBookingCompleted,
   notifyPremiumPayment,
 } = require('../services/bookingNotificationHelper');
 const {
@@ -714,7 +715,8 @@ exports.createBooking = async (req, res, next) => {
           booking_date,
           normalizedTime,
           currentServiceId,
-          customer.id
+          customer.id,
+          { transaction: t }
         );
       }
 
@@ -765,9 +767,8 @@ exports.createBooking = async (req, res, next) => {
         : fullBookings.map(shapeBookingWithPayments),
     });
 
-    const primaryBooking = fullBookings[0];
-    if (primaryBooking) {
-      notifyNewBooking(primaryBooking.id);
+    for (const booking of fullBookings) {
+      notifyNewBooking(booking.id);
     }
   } catch (err) {
     await t.rollback();
@@ -804,19 +805,31 @@ exports.getMyBookings = async (req, res, next) => {
 };
 
 exports.cancelBooking = async (req, res, next) => {
+  const t = await sequelize.transaction();
+  let committed = false;
   try {
-    const customer = await Customer.findOne({ where: { user_id: req.user.id } });
-    const booking = await Booking.findOne({ where: { id: req.params.id, customer_id: customer?.id } });
+    const customer = await Customer.findOne({ where: { user_id: req.user.id }, transaction: t });
+    if (!customer) throw new AppError('Customer profile not found', 404);
+    const booking = await Booking.findOne({
+      where: { id: req.params.id, customer_id: customer.id },
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
     if (!booking) throw new AppError('Booking not found', 404);
     if (!canTransition(booking.booking_status, 'CANCELLED')) {
       throw new AppError('Booking cannot be cancelled', 400);
     }
     booking.booking_status = 'CANCELLED';
+    booking.responded_by = req.user.id;
+    booking.responded_at = new Date();
     booking.updated_by = req.user.id;
-    await booking.save();
+    await booking.save({ transaction: t });
+    await t.commit();
+    committed = true;
     notifyBookingCancelledForOwner(booking.id);
     res.json({ data: booking });
   } catch (err) {
+    if (!committed) await t.rollback();
     next(err);
   }
 };
@@ -1257,8 +1270,13 @@ exports.acceptBooking = async (req, res, next) => {
 };
 
 exports.rejectBooking = async (req, res, next) => {
+  const t = await sequelize.transaction();
+  let committed = false;
   try {
-    const booking = await Booking.findByPk(req.params.id);
+    const booking = await Booking.findByPk(req.params.id, {
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
     if (!booking) throw new AppError('Booking not found', 404);
     await assertSalonOwnership(req.user.id, booking.salon_id);
     if (!canTransition(booking.booking_status, 'REJECTED')) {
@@ -1269,13 +1287,16 @@ exports.rejectBooking = async (req, res, next) => {
     booking.responded_by = req.user.id;
     booking.responded_at = new Date();
     booking.updated_by = req.user.id;
-    await booking.save();
-    notifyBookingCancelledForCustomer(booking.id);
+    await booking.save({ transaction: t });
+    await t.commit();
+    committed = true;
+    notifyBookingRejected(booking.id);
     const fullBooking = await Booking.findByPk(booking.id, {
       include: ownerBookingDetailInclude(),
     });
     res.json({ data: shapeBookingWithPayments(fullBooking) });
   } catch (err) {
+    if (!committed) await t.rollback();
     next(err);
   }
 };
@@ -1342,6 +1363,7 @@ exports.completeBooking = async (req, res, next) => {
     booking.booking_status = 'COMPLETED';
     booking.updated_by = req.user.id;
     await booking.save();
+    notifyBookingCompleted(booking.id);
     const fullBooking = await Booking.findByPk(booking.id, {
       include: ownerBookingDetailInclude(),
     });

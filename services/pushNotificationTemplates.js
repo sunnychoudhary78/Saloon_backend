@@ -1,5 +1,7 @@
 const NOTIFICATION_TYPES = {
   BOOKING_CONFIRMED: 'booking_confirmed',
+  BOOKING_REJECTED: 'booking_rejected',
+  BOOKING_COMPLETED: 'booking_completed',
   APPOINTMENT_REMINDER: 'appointment_reminder',
   BOOKING_CANCELLED: 'booking_cancelled',
   PAYMENT_SUCCESSFUL: 'payment_successful',
@@ -35,6 +37,28 @@ function bookingConfirmed(booking, salonName) {
     type: NOTIFICATION_TYPES.BOOKING_CONFIRMED,
     title: 'Booking Confirmed',
     body: `Your appointment at ${salonName} has been confirmed.`,
+    bookingId: booking.id,
+    screen: SCREENS.BOOKING_DETAILS,
+    userRole: 'customer',
+  });
+}
+
+function bookingRejected(booking, salonName) {
+  return buildPayload({
+    type: NOTIFICATION_TYPES.BOOKING_REJECTED,
+    title: 'Booking Declined',
+    body: `Your appointment request at ${salonName} was declined.`,
+    bookingId: booking.id,
+    screen: SCREENS.BOOKING_DETAILS,
+    userRole: 'customer',
+  });
+}
+
+function bookingCompleted(booking, salonName) {
+  return buildPayload({
+    type: NOTIFICATION_TYPES.BOOKING_COMPLETED,
+    title: 'Appointment Completed',
+    body: `Your appointment at ${salonName} is complete. We hope you enjoyed it!`,
     bookingId: booking.id,
     screen: SCREENS.BOOKING_DETAILS,
     userRole: 'customer',
@@ -121,6 +145,8 @@ module.exports = {
   NOTIFICATION_TYPES,
   SCREENS,
   bookingConfirmed,
+  bookingRejected,
+  bookingCompleted,
   appointmentReminder,
   bookingCancelledCustomer,
   bookingCancelledOwner,

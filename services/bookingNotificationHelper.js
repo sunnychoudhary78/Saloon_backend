@@ -86,6 +86,24 @@ function notifyBookingCancelledForCustomer(bookingId) {
   }).catch((err) => console.error('[push] notifyBookingCancelledForCustomer:', err.message));
 }
 
+function notifyBookingRejected(bookingId) {
+  loadBookingContext(bookingId).then((booking) => {
+    if (!booking) return;
+    const userId = customerUserId(booking);
+    if (!userId) return;
+    sendToUserAsync(userId, templates.bookingRejected(booking, salonName(booking)));
+  }).catch((err) => console.error('[push] notifyBookingRejected:', err.message));
+}
+
+function notifyBookingCompleted(bookingId) {
+  loadBookingContext(bookingId).then((booking) => {
+    if (!booking) return;
+    const userId = customerUserId(booking);
+    if (!userId) return;
+    sendToUserAsync(userId, templates.bookingCompleted(booking, salonName(booking)));
+  }).catch((err) => console.error('[push] notifyBookingCompleted:', err.message));
+}
+
 function notifyPremiumPayment(bookingId) {
   loadBookingContext(bookingId).then((booking) => {
     if (!booking) return;
@@ -107,5 +125,7 @@ module.exports = {
   notifyBookingConfirmed,
   notifyBookingCancelledForOwner,
   notifyBookingCancelledForCustomer,
+  notifyBookingRejected,
+  notifyBookingCompleted,
   notifyPremiumPayment,
 };

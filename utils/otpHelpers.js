@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { normalizePhoneDigits } = require('./phoneUtils');
 
 const OTP_LENGTH = 6;
 const OTP_EXPIRY_MINUTES = 5;
@@ -8,10 +9,7 @@ const OTP_REQUEST_COOLDOWN_MS = 60 * 1000;
 const requestCooldowns = new Map();
 
 function normalizePhone(raw) {
-  if (raw == null) return null;
-  const digits = String(raw).replace(/\D/g, '');
-  if (digits.length < 10) return null;
-  return digits.slice(-10);
+  return normalizePhoneDigits(raw);
 }
 
 function generateOtp() {

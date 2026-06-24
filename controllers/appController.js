@@ -19,6 +19,7 @@ const {
 } = require('../models');
 const AppError = require('../middlewares/AppError');
 const { generateToken, loadUserWithRoles, shapeUserResponse, getRoleNames } = require('../utils/authHelpers');
+const { normalizePhoneDigits } = require('../utils/phoneUtils');
 const { getSalonOwnerForUser, assertSalonOwnership } = require('../utils/ownershipGuard');
 const { generateBookingNumber, canTransition } = require('../services/bookingService');
 const {
@@ -106,6 +107,24 @@ function paymentInclude() {
     required: false,
     order: [['created_at', 'DESC']],
   };
+}
+
+function hasPremiumFee(booking) {
+  const amount = Number(booking?.premium_amount);
+  return Number.isFinite(amount) && amount > 0;
+}
+
+function ownerBookingDetailInclude() {
+  return [
+    {
+      model: Customer,
+      as: 'customer',
+      include: [{ model: User, as: 'user', attributes: ['name', 'phone', 'email'] }],
+    },
+    { model: Service, as: 'service', attributes: ['id', 'service_name', 'price', 'discount_price'] },
+    { model: Salon, as: 'salon', attributes: ['id', 'salon_name', 'city'] },
+    paymentInclude(),
+  ];
 }
 
 function shapeBookingWithPayments(booking) {
@@ -316,7 +335,17 @@ exports.updateProfile = async (req, res, next) => {
     const user = await User.findByPk(req.user.id);
     const { name, phone, email } = req.body;
     if (name) user.name = name;
-    if (phone !== undefined) user.phone = phone;
+    if (phone !== undefined) {
+      if (phone === null || phone === '') {
+        user.phone = null;
+      } else {
+        const normalizedPhone = normalizePhoneDigits(phone);
+        if (!normalizedPhone) {
+          throw new AppError('Phone must be exactly 10 digits', 400);
+        }
+        user.phone = normalizedPhone;
+      }
+    }
     if (email !== undefined) {
       const normalizedEmail = email && String(email).trim()
         ? String(email).trim().toLowerCase()
@@ -738,7 +767,7 @@ exports.createBooking = async (req, res, next) => {
         booking_status: 'PENDING',
         booking_type: isPremiumBooking ? 'PREMIUM' : 'STANDARD',
         premium_amount: isPremiumBooking && i === 0 ? slotInfo.premiumAmount : null,
-        premium_payment_status: isPremiumBooking ? 'PENDING' : 'NONE',
+        premium_payment_status: isPremiumBooking && i === 0 ? 'PENDING' : 'NONE',
         created_by: req.user.id,
         updated_by: req.user.id,
       }, { transaction: t });
@@ -1249,17 +1278,15 @@ exports.acceptBooking = async (req, res, next) => {
     booking.responded_at = new Date();
     booking.updated_by = req.user.id;
     await booking.save({ transaction: t });
-    await createPremiumPaymentWindow(booking, req.user.id, t);
+    if (hasPremiumFee(booking)) {
+      await createPremiumPaymentWindow(booking, req.user.id, t);
+    }
     await t.commit();
     committed = true;
     notifyBookingConfirmed(booking.id);
 
     const fullBooking = await Booking.findByPk(booking.id, {
-      include: [
-        { model: Salon, as: 'salon', attributes: ['id', 'salon_name', 'city'] },
-        { model: Service, as: 'service', attributes: ['id', 'service_name', 'price', 'discount_price'] },
-        paymentInclude(),
-      ],
+      include: ownerBookingDetailInclude(),
     });
     res.json({ data: shapeBookingWithPayments(fullBooking) });
   } catch (err) {
@@ -1283,7 +1310,10 @@ exports.rejectBooking = async (req, res, next) => {
     booking.updated_by = req.user.id;
     await booking.save();
     notifyBookingCancelledForCustomer(booking.id);
-    res.json({ data: booking });
+    const fullBooking = await Booking.findByPk(booking.id, {
+      include: ownerBookingDetailInclude(),
+    });
+    res.json({ data: shapeBookingWithPayments(fullBooking) });
   } catch (err) {
     next(err);
   }
@@ -1341,13 +1371,20 @@ exports.completeBooking = async (req, res, next) => {
     if (!canTransition(booking.booking_status, 'COMPLETED')) {
       throw new AppError('Cannot complete this booking', 400);
     }
-    if (booking.booking_type === 'PREMIUM' && booking.premium_payment_status !== 'PAID') {
+    if (
+      booking.booking_type === 'PREMIUM' &&
+      hasPremiumFee(booking) &&
+      booking.premium_payment_status !== 'PAID'
+    ) {
       throw new AppError('Premium booking must be paid before completion', 400);
     }
     booking.booking_status = 'COMPLETED';
     booking.updated_by = req.user.id;
     await booking.save();
-    res.json({ data: booking });
+    const fullBooking = await Booking.findByPk(booking.id, {
+      include: ownerBookingDetailInclude(),
+    });
+    res.json({ data: shapeBookingWithPayments(fullBooking) });
   } catch (err) {
     next(err);
   }

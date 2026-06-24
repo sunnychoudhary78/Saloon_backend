@@ -3,7 +3,9 @@ const Joi = require('joi');
 const registerSchema = Joi.object({
   name: Joi.string().min(2).required(),
   email: Joi.string().email().allow(null, '').optional(),
-  phone: Joi.string().allow(null, '').optional(),
+  phone: Joi.string().pattern(/^[0-9]{10}$/).allow(null, '').optional().messages({
+    'string.pattern.base': 'Phone must be exactly 10 digits',
+  }),
   password: Joi.string().min(8).required(),
 });
 
@@ -82,7 +84,9 @@ const salonApplicationSchema = Joi.object({
   phone: Joi.when('application_type', {
     is: statusChangeTypes,
     then: Joi.string().allow(null, '').optional(),
-    otherwise: Joi.string().pattern(/^[0-9]{10,15}$/).required(),
+    otherwise: Joi.string().pattern(/^[0-9]{10}$/).required().messages({
+      'string.pattern.base': 'Phone must be exactly 10 digits',
+    }),
   }),
   opening_time: Joi.when('application_type', {
     is: statusChangeTypes,

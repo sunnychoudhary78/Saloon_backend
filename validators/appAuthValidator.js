@@ -1,11 +1,15 @@
 const Joi = require('joi');
 
+const phoneSchema = Joi.string().pattern(/^[0-9]{10}$/).messages({
+  'string.pattern.base': 'Phone must be exactly 10 digits',
+});
+
 const otpRequestSchema = Joi.object({
-  phone: Joi.string().required(),
+  phone: phoneSchema.required(),
 });
 
 const otpVerifySchema = Joi.object({
-  phone: Joi.string().required(),
+  phone: phoneSchema.required(),
   otp: Joi.string().length(6).pattern(/^\d+$/).required(),
 });
 

@@ -35,6 +35,10 @@ exports.login = async (req, res) => {
     if (!isMatch) return res.status(401).json({ message: 'Invalid credentials' });
 
     const fullUser = await loadUserWithRoles(user.id);
+    if (!hasAdminAccess(fullUser)) {
+      return res.status(403).json({ message: 'Admin panel access denied' });
+    }
+
     const token = generateToken(fullUser);
     const userData = shapeUserResponse(fullUser);
 

@@ -2,7 +2,34 @@ const { SalonApplication, Salon, sequelize } = require('../models');
 const { logAudit } = require('./auditService');
 const { ensureApplicationCoordinates } = require('./geocodingService');
 
-const salonFieldsFromApplication = (application, coordsOverride = null) => ({
+function addImageUrl(urls, url) {
+  if (typeof url !== 'string' || url.length === 0 || urls.includes(url)) return;
+  urls.push(url);
+}
+
+function imageFieldsFromApplication(application, existingSalon = null) {
+  const applicationGallery = Array.isArray(application.gallery_images)
+    ? application.gallery_images
+    : [];
+  const existingGallery = Array.isArray(existingSalon?.gallery_images)
+    ? existingSalon.gallery_images
+    : [];
+  const coverImage = application.cover_image || existingSalon?.cover_image || null;
+  const gallerySource = applicationGallery.length > 0
+    ? applicationGallery
+    : existingGallery;
+
+  const galleryImages = [];
+  addImageUrl(galleryImages, coverImage);
+  for (const url of gallerySource) addImageUrl(galleryImages, url);
+
+  return {
+    cover_image: coverImage,
+    gallery_images: galleryImages,
+  };
+}
+
+const salonFieldsFromApplication = (application, coordsOverride = null, existingSalon = null) => ({
   salon_name: application.salon_name,
   description: application.description,
   address: application.address,
@@ -10,8 +37,7 @@ const salonFieldsFromApplication = (application, coordsOverride = null) => ({
   state: application.state,
   latitude: coordsOverride?.latitude ?? application.latitude,
   longitude: coordsOverride?.longitude ?? application.longitude,
-  cover_image: application.cover_image,
-  gallery_images: application.gallery_images,
+  ...imageFieldsFromApplication(application, existingSalon),
   phone: application.phone,
   opening_time: application.opening_time,
   closing_time: application.closing_time,
@@ -69,7 +95,7 @@ async function approveApplication(applicationId, reviewerId, req) {
       }
       await salon.update(
         {
-          ...salonFieldsFromApplication(application, salonCoords),
+          ...salonFieldsFromApplication(application, salonCoords, salon),
           updated_by: reviewerId,
         },
         { transaction: t }

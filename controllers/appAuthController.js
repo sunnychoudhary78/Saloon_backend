@@ -41,7 +41,7 @@ async function assignCustomerRole(userId, transaction) {
 exports.otpRequest = async (req, res, next) => {
   try {
     const phone = normalizePhone(req.body.phone);
-    if (!phone) throw new AppError('Invalid phone number. Enter at least 10 digits.', 400);
+    if (!phone) throw new AppError('Invalid phone number. Enter exactly 10 digits.', 400);
 
     const cooldown = checkRequestCooldown(phone);
     if (!cooldown.allowed) {

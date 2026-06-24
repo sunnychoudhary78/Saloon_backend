@@ -6,7 +6,7 @@ const permissionMiddleware = require('../middlewares/permissionMiddleware');
 const asyncHandler = require('../middlewares/asyncHandler');
 const ctrl = require('../controllers/appController');
 const appAuthCtrl = require('../controllers/appAuthController');
-const { validateRegister, validateBooking, validateSalonApplication, validateSlotBlock } = require('../validators/authValidator');
+const { validateBooking, validateSalonApplication, validateSlotBlock } = require('../validators/authValidator');
 const {
   validateOtpRequest,
   validateOtpVerify,
@@ -22,7 +22,6 @@ const { validateListNotifications } = require('../validators/notificationValidat
 const { uploadSalonImages } = require('../middlewares/upload');
 
 // Public
-router.post('/auth/register', validateRegister, asyncHandler(ctrl.register));
 router.post('/auth/otp-request', validateOtpRequest, asyncHandler(appAuthCtrl.otpRequest));
 router.post('/auth/otp-verify', validateOtpVerify, asyncHandler(appAuthCtrl.otpVerify));
 router.post('/auth/complete-profile', validateCompleteProfile, asyncHandler(appAuthCtrl.completeProfile));

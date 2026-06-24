@@ -1,14 +1,5 @@
 const Joi = require('joi');
 
-const registerSchema = Joi.object({
-  name: Joi.string().min(2).required(),
-  email: Joi.string().email().allow(null, '').optional(),
-  phone: Joi.string().pattern(/^[0-9]{10}$/).allow(null, '').optional().messages({
-    'string.pattern.base': 'Phone must be exactly 10 digits',
-  }),
-  password: Joi.string().min(8).required(),
-});
-
 const loginSchema = Joi.object({
   email: Joi.string().required(),
   password: Joi.string().required(),
@@ -123,7 +114,6 @@ function validate(schema) {
 }
 
 module.exports = {
-  validateRegister: validate(registerSchema),
   validateLogin: validate(loginSchema),
   validateBooking: validate(bookingSchema),
   validateSalonApplication: validate(salonApplicationSchema),

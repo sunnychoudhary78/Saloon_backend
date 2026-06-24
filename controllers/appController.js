@@ -151,7 +151,9 @@ async function loadCustomerBookingForPayment(userId, bookingId, transaction = nu
       paymentInclude(),
     ],
     transaction,
-    lock: transaction ? transaction.LOCK.UPDATE : undefined,
+    lock: transaction
+      ? { level: transaction.LOCK.UPDATE, of: Booking }
+      : undefined,
   });
   if (!booking) throw new AppError('Booking not found', 404);
   return { customer, booking };
@@ -273,46 +275,6 @@ async function loadSalonOwnerContext(userId) {
   }
   return { salon_owner: owner, salon_application };
 }
-
-exports.register = async (req, res, next) => {
-  const t = await sequelize.transaction();
-  try {
-    const { name, email, phone, password } = req.body;
-    if (!name || !password) throw new AppError('name and password are required', 400);
-
-    const normalizedEmail = email && String(email).trim()
-      ? String(email).trim().toLowerCase()
-      : null;
-
-    if (normalizedEmail) {
-      const existing = await User.findOne({ where: { email: normalizedEmail } });
-      if (existing) throw new AppError('Email already registered', 409);
-    }
-
-    const salt = await bcrypt.genSalt(10);
-    const user = await User.create(
-      {
-        name,
-        email: normalizedEmail,
-        phone: phone || null,
-        password: await bcrypt.hash(password, salt),
-        status: 'ACTIVE',
-      },
-      { transaction: t }
-    );
-
-    await assignRole(user.id, 'CUSTOMER', null, t);
-    await Customer.create({ user_id: user.id, status: 'ACTIVE' }, { transaction: t });
-
-    await t.commit();
-
-    const fullUser = await loadUserWithRoles(user.id);
-    res.status(201).json({ token: generateToken(fullUser), user: shapeUserResponse(fullUser) });
-  } catch (err) {
-    await t.rollback();
-    next(err);
-  }
-};
 
 exports.getProfile = async (req, res, next) => {
   try {
@@ -963,7 +925,7 @@ exports.verifyRazorpayPayment = async (req, res, next) => {
         ],
       }],
       transaction: t,
-      lock: t.LOCK.UPDATE,
+      lock: { level: t.LOCK.UPDATE, of: Payment },
     });
     if (!payment) throw new AppError('Payment order not found', 404);
 
@@ -1264,7 +1226,6 @@ exports.acceptBooking = async (req, res, next) => {
   let committed = false;
   try {
     const booking = await Booking.findByPk(req.params.id, {
-      include: [{ model: Salon, as: 'salon' }],
       transaction: t,
       lock: t.LOCK.UPDATE,
     });

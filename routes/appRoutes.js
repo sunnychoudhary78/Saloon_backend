@@ -19,7 +19,7 @@ const {
 const deviceTokenCtrl = require('../controllers/deviceTokenController');
 const notificationCtrl = require('../controllers/notificationController');
 const { validateListNotifications } = require('../validators/notificationValidator');
-const { uploadSalonImages } = require('../middlewares/upload');
+const { uploadSalonImages, uploadProfileImage } = require('../middlewares/upload');
 
 // Public
 router.post('/auth/otp-request', validateOtpRequest, asyncHandler(appAuthCtrl.otpRequest));
@@ -29,6 +29,12 @@ router.post('/auth/complete-profile', validateCompleteProfile, asyncHandler(appA
 // Authenticated
 router.get('/profile', authMiddleware, asyncHandler(ctrl.getProfile));
 router.patch('/profile', authMiddleware, asyncHandler(ctrl.updateProfile));
+router.post(
+  '/uploads/profile-image',
+  authMiddleware,
+  uploadProfileImage.single('image'),
+  asyncHandler(ctrl.uploadProfileImage),
+);
 router.post('/device-token', authMiddleware, validateRegisterDeviceToken, asyncHandler(deviceTokenCtrl.registerDeviceToken));
 router.delete('/device-token', authMiddleware, validateUnregisterDeviceToken, asyncHandler(deviceTokenCtrl.unregisterDeviceToken));
 router.get('/notifications', authMiddleware, validateListNotifications, asyncHandler(notificationCtrl.listNotifications));

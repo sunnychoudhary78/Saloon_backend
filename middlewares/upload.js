@@ -83,3 +83,31 @@ const uploadSalonImages = multer({
 });
 
 module.exports.uploadSalonImages = uploadSalonImages;
+
+const profileImageStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const dir = path.join(__dirname, "../uploads/profiles");
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch (_) {}
+    cb(null, dir);
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    const random = Math.random().toString(36).substring(2, 10);
+    const timestamp = Date.now();
+    cb(null, `profile-${timestamp}-${random}${ext}`);
+  },
+});
+
+const uploadProfileImage = multer({
+  storage: profileImageStorage,
+  limits: { fileSize: 3 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = ["image/png", "image/jpeg", "image/jpg", "image/webp"];
+    if (allowedTypes.includes(file.mimetype)) cb(null, true);
+    else cb(new Error("Only PNG, JPEG, JPG, and WEBP images are allowed"));
+  },
+});
+
+module.exports.uploadProfileImage = uploadProfileImage;

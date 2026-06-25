@@ -27,13 +27,14 @@ exports.listNotifications = async (req, res, next) => {
       offset,
     });
 
+    const total = Number(count) || 0;
     res.json({
       data: rows.map(shapeNotification),
       meta: {
-        page,
-        limit,
-        total: count,
-        total_pages: Math.ceil(count / limit) || 0,
+        page: Number(page) || 1,
+        limit: Number(limit) || 20,
+        total,
+        total_pages: Math.ceil(total / limit) || 0,
       },
     });
   } catch (err) {

@@ -5,6 +5,7 @@ const fs = require('fs');
 const sharp = require('sharp');
 
 const SALON_UPLOAD_DIR = path.join(__dirname, '../uploads/salons');
+const PROFILE_UPLOAD_DIR = path.join(__dirname, '../uploads/profiles');
 
 function parseImageEntry(entry) {
   if (!entry) return null;
@@ -160,6 +161,24 @@ async function generateSalonImageVariants(sourcePath, baseUrl) {
   };
 }
 
+async function generateProfileImage(sourcePath, baseUrl) {
+  const fileName = `profile-${Date.now()}-${Math.random().toString(36).substring(2, 10)}.jpg`;
+  fs.mkdirSync(PROFILE_UPLOAD_DIR, { recursive: true });
+  const outputPath = path.join(PROFILE_UPLOAD_DIR, fileName);
+
+  await sharp(sourcePath)
+    .rotate()
+    .resize({ width: 512, height: 512, fit: 'cover', withoutEnlargement: true })
+    .jpeg({ quality: 85 })
+    .toFile(outputPath);
+
+  try {
+    fs.unlinkSync(sourcePath);
+  } catch (_) {}
+
+  return `${baseUrl}/api/uploads/profiles/${fileName}`;
+}
+
 module.exports = {
   parseImageEntry,
   extractThumbUrl,
@@ -170,4 +189,5 @@ module.exports = {
   shapeGalleryForDetail,
   shapeCoverForDetail,
   generateSalonImageVariants,
+  generateProfileImage,
 };

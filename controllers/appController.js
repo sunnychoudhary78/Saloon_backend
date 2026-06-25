@@ -52,6 +52,7 @@ const {
 } = require('../services/reviewService');
 const {
   generateSalonImageVariants,
+  generateProfileImage,
   shapeGalleryForDetail,
   shapeCoverForDetail,
 } = require('../services/imageProcessingService');
@@ -1498,6 +1499,25 @@ exports.uploadSalonImages = async (req, res, next) => {
         images,
       },
     });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.uploadProfileImage = async (req, res, next) => {
+  try {
+    if (!req.file) {
+      throw new AppError('No image uploaded', 400);
+    }
+
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const path = require('path');
+    const url = await generateProfileImage(
+      path.join(req.file.destination, req.file.filename),
+      baseUrl,
+    );
+
+    res.status(201).json({ data: { url } });
   } catch (err) {
     next(err);
   }

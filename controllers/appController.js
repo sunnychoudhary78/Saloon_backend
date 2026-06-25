@@ -40,6 +40,7 @@ const {
   notifyBookingRejected,
   notifyBookingCompleted,
   notifyPremiumPayment,
+  notifyBookingPayment,
 } = require('../services/bookingNotificationHelper');
 const {
   attachRatingSummary,
@@ -610,7 +611,7 @@ exports.getPremiumBookingConfig = async (req, res, next) => {
 exports.getSalon = async (req, res, next) => {
   try {
     const salon = await Salon.findOne({
-      where: { id: req.params.id, status: 'ACTIVE' },
+      where: { id: req.params.id, status: 'ACTIVE', is_active: true },
       include: [{
         model: Service,
         as: 'services',
@@ -729,7 +730,10 @@ exports.createBooking = async (req, res, next) => {
         booking_time: normalizedTime,
         notes,
         booking_status: 'PENDING',
-        booking_type: isPremiumBooking ? 'PREMIUM' : 'STANDARD',
+        // The premium (urgent) fee is charged once per slot on the primary
+        // booking. Additional services in the same urgent request are STANDARD
+        // so they aren't blocked behind a premium payment they don't owe.
+        booking_type: isPremiumBooking && i === 0 ? 'PREMIUM' : 'STANDARD',
         premium_amount: isPremiumBooking && i === 0 ? slotInfo.premiumAmount : null,
         premium_payment_status: isPremiumBooking && i === 0 ? 'PENDING' : 'NONE',
         created_by: req.user.id,
@@ -919,6 +923,7 @@ exports.verifyRazorpayPayment = async (req, res, next) => {
   const t = await sequelize.transaction();
   let committed = false;
   let notifyPremiumBookingId = null;
+  let notifySalonFee = null;
   try {
     const {
       razorpay_order_id: orderId,
@@ -954,6 +959,10 @@ exports.verifyRazorpayPayment = async (req, res, next) => {
     }
     if (payment.status !== 'PENDING') throw new AppError(`Payment is ${payment.status.toLowerCase()}`, 400);
 
+    if (payment.booking.booking_status !== 'ACCEPTED') {
+      throw new AppError('This booking is no longer active for payment', 400);
+    }
+
     const valid = verifyPaymentSignature({ orderId, paymentId, signature });
     if (!valid) {
       payment.status = 'FAILED';
@@ -980,11 +989,14 @@ exports.verifyRazorpayPayment = async (req, res, next) => {
       payment.booking.updated_by = req.user.id;
       await payment.booking.save({ transaction: t });
       notifyPremiumBookingId = payment.booking_id;
+    } else if (payment.payment_type === 'SALON_FEE') {
+      notifySalonFee = { bookingId: payment.booking_id, amount: payment.amount };
     }
 
     await t.commit();
     committed = true;
     if (notifyPremiumBookingId) notifyPremiumPayment(notifyPremiumBookingId);
+    if (notifySalonFee) notifyBookingPayment(notifySalonFee.bookingId, notifySalonFee.amount);
 
     const booking = await Booking.findByPk(payment.booking_id, {
       include: [

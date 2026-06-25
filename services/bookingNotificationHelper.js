@@ -104,6 +104,21 @@ function notifyBookingCompleted(bookingId) {
   }).catch((err) => console.error('[push] notifyBookingCompleted:', err.message));
 }
 
+function notifyBookingPayment(bookingId, amount) {
+  loadBookingContext(bookingId).then((booking) => {
+    if (!booking) return;
+    const paid = amount || '0';
+    const customerId = customerUserId(booking);
+    const ownerId = ownerUserId(booking);
+    if (customerId) {
+      sendToUserAsync(customerId, templates.paymentSuccessful(booking, salonName(booking), paid));
+    }
+    if (ownerId) {
+      sendToUserAsync(ownerId, templates.paymentReceived(booking, customerName(booking), paid));
+    }
+  }).catch((err) => console.error('[push] notifyBookingPayment:', err.message));
+}
+
 function notifyPremiumPayment(bookingId) {
   loadBookingContext(bookingId).then((booking) => {
     if (!booking) return;
@@ -128,4 +143,5 @@ module.exports = {
   notifyBookingRejected,
   notifyBookingCompleted,
   notifyPremiumPayment,
+  notifyBookingPayment,
 };

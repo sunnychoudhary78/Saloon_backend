@@ -9,6 +9,9 @@ module.exports = (sequelize, DataTypes) => {
         primaryKey: true,
       },
       booking_number: { type: DataTypes.STRING(20), allowNull: false, unique: true },
+      // Groups all rows created from a single multi-service request so they can
+      // be accepted/rejected/cancelled together as one logical booking.
+      booking_group_id: { type: DataTypes.UUID, allowNull: true },
       customer_id: { type: DataTypes.UUID, allowNull: false },
       salon_id: { type: DataTypes.UUID, allowNull: false },
       service_id: { type: DataTypes.UUID, allowNull: false },

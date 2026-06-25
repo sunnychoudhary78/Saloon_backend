@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const { Op } = require('sequelize');
 const {
@@ -139,6 +140,17 @@ function shapeBookingWithPayments(booking) {
     premium_payment: latest.premium_payment,
     salon_fee_payment: latest.salon_fee_payment,
   };
+}
+
+// Loads every booking that belongs to the same multi-service request (locked
+// for update). Legacy rows without a group id resolve to just themselves.
+async function loadBookingGroupForUpdate(primary, transaction) {
+  if (!primary.booking_group_id) return [primary];
+  return Booking.findAll({
+    where: { booking_group_id: primary.booking_group_id },
+    transaction,
+    lock: transaction ? transaction.LOCK.UPDATE : undefined,
+  });
 }
 
 async function loadCustomerBookingForPayment(userId, bookingId, transaction = null) {
@@ -699,6 +711,9 @@ exports.createBooking = async (req, res, next) => {
 
     const normalizedTime = normalizeSlotStart(booking_time) || slotInfo.slotStart;
     const isPremiumBooking = slotInfo.bookingType === 'PREMIUM';
+    // All services requested together share one group id so the salon can
+    // accept/reject/cancel them as a single logical booking.
+    const bookingGroupId = crypto.randomUUID();
     const createdBookings = [];
 
     for (let i = 0; i < serviceIds.length; i += 1) {
@@ -723,6 +738,7 @@ exports.createBooking = async (req, res, next) => {
 
       const booking = await Booking.create({
         booking_number: await generateBookingNumber(t),
+        booking_group_id: bookingGroupId,
         customer_id: customer.id,
         salon_id,
         service_id: currentServiceId,
@@ -823,11 +839,18 @@ exports.cancelBooking = async (req, res, next) => {
     if (!canTransition(booking.booking_status, 'CANCELLED')) {
       throw new AppError('Booking cannot be cancelled', 400);
     }
-    booking.booking_status = 'CANCELLED';
-    booking.responded_by = req.user.id;
-    booking.responded_at = new Date();
-    booking.updated_by = req.user.id;
-    await booking.save({ transaction: t });
+
+    // Cancel every still-active service in the same request.
+    const group = await loadBookingGroupForUpdate(booking, t);
+    for (const item of group) {
+      if (item.customer_id !== customer.id) continue;
+      if (!canTransition(item.booking_status, 'CANCELLED')) continue;
+      item.booking_status = 'CANCELLED';
+      item.responded_by = req.user.id;
+      item.responded_at = new Date();
+      item.updated_by = req.user.id;
+      await item.save({ transaction: t });
+    }
     await t.commit();
     committed = true;
     notifyBookingCancelledForOwner(booking.id);
@@ -1259,13 +1282,19 @@ exports.acceptBooking = async (req, res, next) => {
     if (!canTransition(booking.booking_status, 'ACCEPTED')) {
       throw new AppError('Cannot accept this booking', 400);
     }
-    booking.booking_status = 'ACCEPTED';
-    booking.responded_by = req.user.id;
-    booking.responded_at = new Date();
-    booking.updated_by = req.user.id;
-    await booking.save({ transaction: t });
-    if (hasPremiumFee(booking)) {
-      await createPremiumPaymentWindow(booking, req.user.id, t);
+
+    // Accept every still-pending service in the same request.
+    const group = await loadBookingGroupForUpdate(booking, t);
+    for (const item of group) {
+      if (!canTransition(item.booking_status, 'ACCEPTED')) continue;
+      item.booking_status = 'ACCEPTED';
+      item.responded_by = req.user.id;
+      item.responded_at = new Date();
+      item.updated_by = req.user.id;
+      await item.save({ transaction: t });
+      if (hasPremiumFee(item)) {
+        await createPremiumPaymentWindow(item, req.user.id, t);
+      }
     }
     await t.commit();
     committed = true;
@@ -1294,12 +1323,20 @@ exports.rejectBooking = async (req, res, next) => {
     if (!canTransition(booking.booking_status, 'REJECTED')) {
       throw new AppError('Cannot reject this booking', 400);
     }
-    booking.booking_status = 'REJECTED';
-    booking.rejection_reason = req.body.rejection_reason || null;
-    booking.responded_by = req.user.id;
-    booking.responded_at = new Date();
-    booking.updated_by = req.user.id;
-    await booking.save({ transaction: t });
+
+    // Reject every still-pending service in the same request so the slot is
+    // fully freed (no orphaned siblings blocking a re-send).
+    const rejectionReason = req.body.rejection_reason || null;
+    const group = await loadBookingGroupForUpdate(booking, t);
+    for (const item of group) {
+      if (!canTransition(item.booking_status, 'REJECTED')) continue;
+      item.booking_status = 'REJECTED';
+      item.rejection_reason = rejectionReason;
+      item.responded_by = req.user.id;
+      item.responded_at = new Date();
+      item.updated_by = req.user.id;
+      await item.save({ transaction: t });
+    }
     await t.commit();
     committed = true;
     notifyBookingRejected(booking.id);
@@ -1358,8 +1395,13 @@ exports.getOwnerReviews = async (req, res, next) => {
 };
 
 exports.completeBooking = async (req, res, next) => {
+  const t = await sequelize.transaction();
+  let committed = false;
   try {
-    const booking = await Booking.findByPk(req.params.id);
+    const booking = await Booking.findByPk(req.params.id, {
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
     if (!booking) throw new AppError('Booking not found', 404);
     await assertSalonOwnership(req.user.id, booking.salon_id);
     if (!canTransition(booking.booking_status, 'COMPLETED')) {
@@ -1372,15 +1414,32 @@ exports.completeBooking = async (req, res, next) => {
     ) {
       throw new AppError('Premium booking must be paid before completion', 400);
     }
-    booking.booking_status = 'COMPLETED';
-    booking.updated_by = req.user.id;
-    await booking.save();
+
+    // Complete every accepted service in the same request. A still-unpaid
+    // premium service is left as-is rather than failing the whole group.
+    const group = await loadBookingGroupForUpdate(booking, t);
+    for (const item of group) {
+      if (!canTransition(item.booking_status, 'COMPLETED')) continue;
+      if (
+        item.booking_type === 'PREMIUM' &&
+        hasPremiumFee(item) &&
+        item.premium_payment_status !== 'PAID'
+      ) {
+        continue;
+      }
+      item.booking_status = 'COMPLETED';
+      item.updated_by = req.user.id;
+      await item.save({ transaction: t });
+    }
+    await t.commit();
+    committed = true;
     notifyBookingCompleted(booking.id);
     const fullBooking = await Booking.findByPk(booking.id, {
       include: ownerBookingDetailInclude(),
     });
     res.json({ data: shapeBookingWithPayments(fullBooking) });
   } catch (err) {
+    if (!committed) await t.rollback();
     next(err);
   }
 };

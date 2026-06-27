@@ -52,9 +52,43 @@ function verifyPaymentSignature({ orderId, paymentId, signature }) {
   return expected === signature;
 }
 
+function getWebhookSecret() {
+  const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
+  if (!secret) {
+    throw new AppError('Razorpay webhook secret is not configured', 500);
+  }
+  return secret;
+}
+
+/**
+ * Verifies X-Razorpay-Signature against the raw webhook request body.
+ * @param {Buffer|string} rawBody
+ * @param {string|undefined} signature
+ */
+function verifyWebhookSignature(rawBody, signature) {
+  if (!signature) return false;
+
+  const body = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(String(rawBody));
+  const expected = crypto
+    .createHmac('sha256', getWebhookSecret())
+    .update(body)
+    .digest('hex');
+
+  try {
+    return crypto.timingSafeEqual(
+      Buffer.from(expected, 'utf8'),
+      Buffer.from(signature, 'utf8'),
+    );
+  } catch {
+    return false;
+  }
+}
+
 module.exports = {
   amountToPaise,
   createOrder,
   getKeyId,
+  getWebhookSecret,
   verifyPaymentSignature,
+  verifyWebhookSignature,
 };

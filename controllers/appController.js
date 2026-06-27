@@ -40,8 +40,6 @@ const {
   notifyBookingCancelledForOwner,
   notifyBookingRejected,
   notifyBookingCompleted,
-  notifyPremiumPayment,
-  notifyBookingPayment,
 } = require('../services/bookingNotificationHelper');
 const {
   attachRatingSummary,
@@ -84,7 +82,10 @@ const {
   shapePayment,
   splitPayments,
 } = require('../services/paymentService');
-const { verifyPaymentSignature } = require('../services/razorpayService');
+const {
+  dispatchPaymentNotifications,
+  fulfillRazorpayPayment,
+} = require('../services/paymentFulfillmentService');
 
 function isSalonActive(salon) {
   return salon.status === 'ACTIVE' && salon.is_active === true;
@@ -118,6 +119,13 @@ function hasPremiumFee(booking) {
   return Number.isFinite(amount) && amount > 0;
 }
 
+const CUSTOMER_SALON_ATTRS = ['id', 'salon_name', 'city', 'phone'];
+const CONFIRMED_BOOKING_STATUSES = new Set(['ACCEPTED', 'COMPLETED']);
+
+function customerSalonInclude() {
+  return { model: Salon, as: 'salon', attributes: CUSTOMER_SALON_ATTRS };
+}
+
 function ownerBookingDetailInclude() {
   return [
     {
@@ -143,6 +151,16 @@ function shapeBookingWithPayments(booking) {
   };
 }
 
+function shapeCustomerBooking(booking) {
+  const shaped = shapeBookingWithPayments(booking);
+  if (shaped.salon && !CONFIRMED_BOOKING_STATUSES.has(shaped.booking_status)) {
+    const salon = { ...shaped.salon };
+    delete salon.phone;
+    shaped.salon = salon;
+  }
+  return shaped;
+}
+
 // Loads every booking that belongs to the same multi-service request (locked
 // for update). Legacy rows without a group id resolve to just themselves.
 async function loadBookingGroupForUpdate(primary, transaction) {
@@ -161,7 +179,7 @@ async function loadCustomerBookingForPayment(userId, bookingId, transaction = nu
   const booking = await Booking.findOne({
     where: { id: bookingId, customer_id: customer.id },
     include: [
-      { model: Salon, as: 'salon', attributes: ['id', 'salon_name', 'city'] },
+      customerSalonInclude(),
       { model: Service, as: 'service', attributes: ['id', 'service_name', 'price', 'discount_price'] },
       paymentInclude(),
     ],
@@ -642,6 +660,7 @@ exports.getSalon = async (req, res, next) => {
     data.cover_image = shapeCoverForDetail(data.cover_image, data.gallery_images);
     data.gallery_images = shapeGalleryForDetail(data.gallery_images);
     data = shapeDiscountSummary(data);
+    delete data.phone;
     res.json({ data });
   } catch (err) {
     next(err);
@@ -775,7 +794,7 @@ exports.createBooking = async (req, res, next) => {
     const fullBookings = await Booking.findAll({
       where: { id: createdBookings.map((b) => b.id) },
       include: [
-        { model: Salon, as: 'salon', attributes: ['id', 'salon_name', 'city'] },
+        customerSalonInclude(),
         { model: Service, as: 'service', attributes: ['id', 'service_name', 'price'] },
         paymentInclude(),
       ],
@@ -784,8 +803,8 @@ exports.createBooking = async (req, res, next) => {
 
     res.status(201).json({
       data: fullBookings.length === 1
-        ? shapeBookingWithPayments(fullBookings[0])
-        : fullBookings.map(shapeBookingWithPayments),
+        ? shapeCustomerBooking(fullBookings[0])
+        : fullBookings.map(shapeCustomerBooking),
     });
 
     for (const booking of fullBookings) {
@@ -805,7 +824,7 @@ exports.getMyBookings = async (req, res, next) => {
     const bookings = await Booking.findAll({
       where: { customer_id: customer.id },
       include: [
-        { model: Salon, as: 'salon', attributes: ['id', 'salon_name', 'city'] },
+        customerSalonInclude(),
         { model: Service, as: 'service', attributes: ['id', 'service_name', 'price', 'discount_price', 'duration_minutes'] },
         { model: Review, as: 'review', required: false },
         paymentInclude(),
@@ -814,7 +833,7 @@ exports.getMyBookings = async (req, res, next) => {
     });
 
     const data = bookings.map((booking) => {
-      const plain = shapeBookingWithPayments(booking);
+      const plain = shapeCustomerBooking(booking);
       const flags = shapeBookingReviewFlags(booking, plain.service, plain.review);
       return { ...plain, ...flags };
     });
@@ -946,8 +965,6 @@ exports.createRazorpayOrder = async (req, res, next) => {
 exports.verifyRazorpayPayment = async (req, res, next) => {
   const t = await sequelize.transaction();
   let committed = false;
-  let notifyPremiumBookingId = null;
-  let notifySalonFee = null;
   try {
     const {
       razorpay_order_id: orderId,
@@ -955,81 +972,36 @@ exports.verifyRazorpayPayment = async (req, res, next) => {
       razorpay_signature: signature,
     } = req.body;
 
-    const payment = await Payment.findOne({
-      where: { razorpay_order_id: orderId },
-      include: [{
-        model: Booking,
-        as: 'booking',
-        include: [
-          { model: Salon, as: 'salon', attributes: ['id', 'salon_name', 'city'] },
-          { model: Service, as: 'service', attributes: ['id', 'service_name', 'price', 'discount_price'] },
-          paymentInclude(),
-        ],
-      }],
+    const result = await fulfillRazorpayPayment({
+      orderId,
+      paymentId,
+      signature,
+      updatedByUserId: req.user.id,
+      customerUserId: req.user.id,
       transaction: t,
-      lock: { level: t.LOCK.UPDATE, of: Payment },
+      requireSignature: true,
+      allowExpiredFulfillment: false,
     });
-    if (!payment) throw new AppError('Payment order not found', 404);
 
-    const customer = await Customer.findOne({ where: { user_id: req.user.id }, transaction: t });
-    if (!customer || payment.customer_id !== customer.id) throw new AppError('Payment order not found', 404);
-
-    await markExpired(payment, t);
-    if (payment.status === 'EXPIRED') throw new AppError('Payment window has expired', 400);
-    if (payment.status === 'PAID') {
-      await t.commit();
-      committed = true;
-      return res.json({ data: shapePayment(payment), booking: shapeBookingWithPayments(payment.booking) });
-    }
-    if (payment.status !== 'PENDING') throw new AppError(`Payment is ${payment.status.toLowerCase()}`, 400);
-
-    if (payment.booking.booking_status !== 'ACCEPTED') {
-      throw new AppError('This booking is no longer active for payment', 400);
-    }
-
-    const valid = verifyPaymentSignature({ orderId, paymentId, signature });
-    if (!valid) {
-      payment.status = 'FAILED';
-      payment.failure_reason = 'Razorpay signature verification failed';
-      payment.updated_by = req.user.id;
-      await payment.save({ transaction: t });
-      if (payment.payment_type === 'PREMIUM_FEE') {
-        payment.booking.premium_payment_status = 'FAILED';
-        payment.booking.updated_by = req.user.id;
-        await payment.booking.save({ transaction: t });
-      }
-      throw new AppError('Payment verification failed', 400);
-    }
-
-    payment.status = 'PAID';
-    payment.razorpay_payment_id = paymentId;
-    payment.razorpay_signature = signature;
-    payment.paid_at = new Date();
-    payment.updated_by = req.user.id;
-    await payment.save({ transaction: t });
-
-    if (payment.payment_type === 'PREMIUM_FEE') {
-      payment.booking.premium_payment_status = 'PAID';
-      payment.booking.updated_by = req.user.id;
-      await payment.booking.save({ transaction: t });
-      notifyPremiumBookingId = payment.booking_id;
-    } else if (payment.payment_type === 'SALON_FEE') {
-      notifySalonFee = { bookingId: payment.booking_id, amount: payment.amount };
+    if (!result.found) {
+      throw new AppError('Payment order not found', 404);
     }
 
     await t.commit();
     committed = true;
-    if (notifyPremiumBookingId) notifyPremiumPayment(notifyPremiumBookingId);
-    if (notifySalonFee) notifyBookingPayment(notifySalonFee.bookingId, notifySalonFee.amount);
 
-    const booking = await Booking.findByPk(payment.booking_id, {
+    if (!result.alreadyPaid && result.notifications) {
+      dispatchPaymentNotifications(result.notifications);
+    }
+
+    const booking = await Booking.findByPk(result.payment.booking_id, {
       include: [
-        { model: Salon, as: 'salon', attributes: ['id', 'salon_name', 'city'] },
+        customerSalonInclude(),
         { model: Service, as: 'service', attributes: ['id', 'service_name', 'price', 'discount_price'] },
         paymentInclude(),
       ],
     });
-    res.json({ data: shapePayment(payment), booking: shapeBookingWithPayments(booking) });
+    res.json({ data: shapePayment(result.payment), booking: shapeCustomerBooking(booking) });
   } catch (err) {
     if (!committed) await t.rollback();
     next(err);
@@ -1056,7 +1028,7 @@ exports.selectPayAtShop = async (req, res, next) => {
     if (latest?.status === 'PENDING' && latest.method === 'PAY_AT_SHOP') {
       await t.commit();
       committed = true;
-      return res.json({ data: shapePayment(latest), booking: shapeBookingWithPayments(booking) });
+      return res.json({ data: shapePayment(latest), booking: shapeCustomerBooking(booking) });
     }
 
     const payment = await Payment.create({
@@ -1077,12 +1049,12 @@ exports.selectPayAtShop = async (req, res, next) => {
 
     const fullBooking = await Booking.findByPk(booking.id, {
       include: [
-        { model: Salon, as: 'salon', attributes: ['id', 'salon_name', 'city'] },
+        customerSalonInclude(),
         { model: Service, as: 'service', attributes: ['id', 'service_name', 'price', 'discount_price'] },
         paymentInclude(),
       ],
     });
-    res.json({ data: shapePayment(payment), booking: shapeBookingWithPayments(fullBooking) });
+    res.json({ data: shapePayment(payment), booking: shapeCustomerBooking(fullBooking) });
   } catch (err) {
     if (!committed) await t.rollback();
     next(err);

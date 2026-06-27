@@ -6,7 +6,16 @@ const permissionMiddleware = require('../middlewares/permissionMiddleware');
 const asyncHandler = require('../middlewares/asyncHandler');
 const ctrl = require('../controllers/appController');
 const appAuthCtrl = require('../controllers/appAuthController');
-const { validateBooking, validateSalonApplication, validateSlotBlock } = require('../validators/authValidator');
+const {
+  validateBooking,
+  validateSalonApplication,
+  validateSlotBlock,
+} = require('../validators/authValidator');
+const {
+  validateCreateRazorpayOrder,
+  validatePayAtShop,
+  validateVerifyRazorpayPayment,
+} = require('../validators/paymentValidator');
 const {
   validateOtpRequest,
   validateOtpVerify,
@@ -55,9 +64,9 @@ router.get('/premium-booking/config', authMiddleware, roleMiddleware(['CUSTOMER'
 router.post('/bookings', authMiddleware, roleMiddleware(['CUSTOMER']), validateBooking, asyncHandler(ctrl.createBooking));
 router.get('/bookings', authMiddleware, roleMiddleware(['CUSTOMER']), asyncHandler(ctrl.getMyBookings));
 router.patch('/bookings/:id/cancel', authMiddleware, roleMiddleware(['CUSTOMER']), asyncHandler(ctrl.cancelBooking));
-router.post('/payments/razorpay/order', authMiddleware, roleMiddleware(['CUSTOMER']), asyncHandler(ctrl.createRazorpayOrder));
-router.post('/payments/razorpay/verify', authMiddleware, roleMiddleware(['CUSTOMER']), asyncHandler(ctrl.verifyRazorpayPayment));
-router.post('/payments/pay-at-shop', authMiddleware, roleMiddleware(['CUSTOMER']), asyncHandler(ctrl.selectPayAtShop));
+router.post('/payments/razorpay/order', authMiddleware, roleMiddleware(['CUSTOMER']), validateCreateRazorpayOrder, asyncHandler(ctrl.createRazorpayOrder));
+router.post('/payments/razorpay/verify', authMiddleware, roleMiddleware(['CUSTOMER']), validateVerifyRazorpayPayment, asyncHandler(ctrl.verifyRazorpayPayment));
+router.post('/payments/pay-at-shop', authMiddleware, roleMiddleware(['CUSTOMER']), validatePayAtShop, asyncHandler(ctrl.selectPayAtShop));
 router.post('/reviews', authMiddleware, roleMiddleware(['CUSTOMER']), asyncHandler(ctrl.createReview));
 
 // Salon owner registration & applications

@@ -5,6 +5,8 @@ const path = require('path');
 const requestId = require('./middlewares/requestId');
 const errorMiddleware = require('./middlewares/errorMiddleware');
 const AppError = require('./middlewares/AppError');
+const asyncHandler = require('./middlewares/asyncHandler');
+const razorpayWebhookController = require('./controllers/razorpayWebhookController');
 
 const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
@@ -14,6 +16,14 @@ const app = express();
 
 app.set('trust proxy', true);
 app.use(requestId);
+
+// Razorpay webhooks must verify HMAC against the raw request body.
+app.post(
+  '/api/app/payments/razorpay/webhook',
+  express.raw({ type: 'application/json' }),
+  asyncHandler(razorpayWebhookController.handleWebhook),
+);
+
 app.use(express.json());
 
 const corsOptions = {

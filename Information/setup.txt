@@ -99,6 +99,7 @@ EMAIL_PASS=your_email_app_password
 
 RAZORPAY_KEY_ID=
 RAZORPAY_KEY_SECRET=
+RAZORPAY_WEBHOOK_SECRET=
 
 GOOGLE_MAPS_API_KEY=
 
@@ -190,6 +191,16 @@ npm run dev
 // Razorpay:
 //   Required only for payment flows. Leave RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET
 //   empty for general local UI testing.
+//
+//   Production webhook URL (configure in Razorpay Dashboard → Webhooks):
+//     https://<your-api-domain>/api/app/payments/razorpay/webhook
+//
+//   Subscribe to at least:
+//     - payment.captured
+//     - payment.failed
+//
+//   Set RAZORPAY_WEBHOOK_SECRET to the secret shown when you create the webhook.
+//   Use rzp_test_* keys locally; use rzp_live_* keys only on the production server.
 //
 // Firebase push notifications:
 //   Set FIREBASE_SERVICE_ACCOUNT_PATH in backend .env only if testing push.

@@ -1,24 +1,26 @@
 name: Deploy Backend
 
+run-name: Deploy Backend
+
 on:
-push:
-branches:
-  - main
+  push:
+    branches:
+      - main
 
 jobs:
-deploy:
-runs-on: ubuntu-latest
-
-steps:
-  - name: Deploy to VPS
-    uses: appleboy/ssh-action@v1.0.3
-    with:
-      host: ${{ secrets.HOST }}
-      username: ${{ secrets.USERNAME }}
-      key: ${{ secrets.SSH_PRIVATE_KEY }}
-      script: |
-        cd /var/www/uat_salon_backend_apis/UAT_SALON_SERVICES
-        git pull origin main
-        npm install
-        npx sequelize-cli db:migrate --env uat
-        pm2 restart UAT_SALON_API --update-env
+  deploy:
+    name: Deploy to VPS
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd /var/www/uat_salon_backend_apis/UAT_SALON_SERVICES
+            git pull origin main
+            npm install
+            npx sequelize-cli db:migrate --env uat
+            pm2 restart UAT_SALON_API --update-env

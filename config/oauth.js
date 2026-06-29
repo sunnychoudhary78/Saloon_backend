@@ -46,5 +46,3 @@ module.exports = (passport) => {
     done(null, user);
   });
 };
-
-// Auth

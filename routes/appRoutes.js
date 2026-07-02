@@ -10,6 +10,7 @@ const {
   validateBooking,
   validateSalonApplication,
   validateSlotBlock,
+  validatePremiumBookingFee,
 } = require('../validators/authValidator');
 const {
   validateCreateRazorpayOrder,
@@ -53,14 +54,14 @@ router.patch('/notifications/:id/read', authMiddleware, asyncHandler(notificatio
 router.get('/banners', authMiddleware, asyncHandler(ctrl.getBanners));
 router.post('/coupons/validate', authMiddleware, asyncHandler(ctrl.validateCoupon));
 router.get('/service-categories', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.getServiceCategories));
-router.get('/places/search', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.searchPlaces));
+router.get('/places/search', authMiddleware, roleMiddleware(['CUSTOMER', 'SALON_OWNER']), asyncHandler(ctrl.searchPlaces));
 
 // Customer
 router.get('/salons', authMiddleware, roleMiddleware(['CUSTOMER', 'SALON_OWNER']), asyncHandler(ctrl.browseSalons));
 router.get('/salons/:id/slots', authMiddleware, roleMiddleware(['CUSTOMER', 'SALON_OWNER']), asyncHandler(ctrl.getSalonSlots));
 router.get('/salons/:id/reviews', authMiddleware, roleMiddleware(['CUSTOMER', 'SALON_OWNER']), asyncHandler(ctrl.getSalonReviews));
 router.get('/salons/:id', authMiddleware, roleMiddleware(['CUSTOMER', 'SALON_OWNER']), asyncHandler(ctrl.getSalon));
-router.get('/premium-booking/config', authMiddleware, roleMiddleware(['CUSTOMER']), asyncHandler(ctrl.getPremiumBookingConfig));
+router.get('/premium-booking/config', authMiddleware, roleMiddleware(['CUSTOMER', 'SALON_OWNER']), asyncHandler(ctrl.getPremiumBookingConfig));
 router.post('/bookings', authMiddleware, roleMiddleware(['CUSTOMER']), validateBooking, asyncHandler(ctrl.createBooking));
 router.get('/bookings', authMiddleware, roleMiddleware(['CUSTOMER']), asyncHandler(ctrl.getMyBookings));
 router.patch('/bookings/:id/cancel', authMiddleware, roleMiddleware(['CUSTOMER']), asyncHandler(ctrl.cancelBooking));
@@ -85,6 +86,7 @@ router.get('/owner/salons', authMiddleware, roleMiddleware(['SALON_OWNER']), asy
 router.get('/owner/salon-applications', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.getOwnerSalonApplications));
 router.get('/owner/salons/:salonId/slots', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.getOwnerSalonSlots));
 router.put('/owner/salons/:salonId/slots/block', authMiddleware, roleMiddleware(['SALON_OWNER']), validateSlotBlock, asyncHandler(ctrl.setOwnerSalonSlotBlock));
+router.put('/owner/salons/:salonId/premium-booking', authMiddleware, roleMiddleware(['SALON_OWNER']), validatePremiumBookingFee, asyncHandler(ctrl.updateOwnerSalonPremiumBooking));
 router.get('/owner/salons/:salonId/services', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.getOwnerServices));
 router.post('/owner/salons/:salonId/services', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.createOwnerService));
 router.put('/owner/salons/:salonId/services/:serviceId', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.updateOwnerService));

@@ -22,6 +22,7 @@ module.exports = (sequelize, DataTypes) => {
       phone: { type: DataTypes.STRING, allowNull: false },
       opening_time: { type: DataTypes.TIME, allowNull: false },
       closing_time: { type: DataTypes.TIME, allowNull: false },
+      premium_booking_fee: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
       is_featured: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
       featured_sort_order: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
       status: {

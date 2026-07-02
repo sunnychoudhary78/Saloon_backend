@@ -22,6 +22,10 @@ const slotBlockSchema = Joi.object({
   note: Joi.string().allow(null, '').optional(),
 });
 
+const premiumBookingFeeSchema = Joi.object({
+  premium_booking_fee: Joi.number().min(1).max(10000).allow(null).required(),
+});
+
 const statusChangeTypes = Joi.valid('DEACTIVATE', 'ACTIVATE', 'CLOSE');
 const timePattern = /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
 
@@ -89,6 +93,7 @@ const salonApplicationSchema = Joi.object({
     then: Joi.string().allow(null, '').optional(),
     otherwise: Joi.string().pattern(timePattern).required(),
   }),
+  premium_booking_fee: Joi.number().min(1).max(10000).allow(null).optional(),
 }).custom((value, helpers) => {
   const type = value.application_type || 'CREATE';
   if (statusChangeTypes.validate(type).error) return value;
@@ -118,4 +123,5 @@ module.exports = {
   validateBooking: validate(bookingSchema),
   validateSalonApplication: validate(salonApplicationSchema),
   validateSlotBlock: validate(slotBlockSchema),
+  validatePremiumBookingFee: validate(premiumBookingFeeSchema),
 };

@@ -41,6 +41,9 @@ const salonFieldsFromApplication = (application, coordsOverride = null, existing
   phone: application.phone,
   opening_time: application.opening_time,
   closing_time: application.closing_time,
+  premium_booking_fee: application.premium_booking_fee != null
+    ? application.premium_booking_fee
+    : (existingSalon?.premium_booking_fee ?? null),
 });
 
 function normalizeApplicationType(type) {

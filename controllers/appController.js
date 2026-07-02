@@ -32,6 +32,7 @@ const {
   assertAdditionalServiceBookable,
   setSlotBlocked,
   loadPremiumConfig,
+  resolvePremiumConfigForSalon,
   normalizeSlotStart,
 } = require('../services/slotService');
 const {
@@ -61,6 +62,7 @@ const {
   emptyRatingSummary,
   discountedSalonExistsLiteral,
   minRatingSalonExistsLiteral,
+  filterAndSortSalonsByAvailability,
 } = require('../services/salonBrowseService');
 const {
   parseUserCoordinates,
@@ -490,11 +492,40 @@ exports.getOwnerSalonApplications = async (req, res, next) => {
   }
 };
 
+function shapeBrowseSalonRows(salons, {
+  ratingMap,
+  slotsMap,
+  discountMap,
+  serviceSalonIds,
+  userCoords,
+}) {
+  return salons.map((salonJson) => {
+    if (userCoords) {
+      attachDistance(salonJson, userCoords.userLat, userCoords.userLng);
+    } else {
+      shapeSalonDistanceFields(salonJson);
+    }
+
+    return shapeBrowseSalonDto(salonJson, {
+      ratingSummary: ratingMap.get(salonJson.id) || emptyRatingSummary(),
+      slotsToday: slotsMap.get(salonJson.id) || { total: 0, available: 0, status: 'unknown' },
+      discountFlags: discountMap.get(salonJson.id) || {
+        has_discount: false,
+        discounted_services_count: 0,
+        max_savings_percent: 0,
+      },
+      hasServices: serviceSalonIds.has(salonJson.id),
+      userCoords,
+    });
+  });
+}
+
 exports.browseSalons = async (req, res, next) => {
   try {
     const where = { status: 'ACTIVE', is_active: true };
     const featuredOnly = isTruthy(req.query.featured);
     const discountedOnly = isTruthy(req.query.has_discount);
+    const hasAvailableSlots = isTruthy(req.query.has_available_slots);
     const userCoords = parseUserCoordinates(req.query);
     const minRating = parseFloat(req.query.min_rating);
     const maxDistanceKm = parseFloat(req.query.max_distance_km);
@@ -557,20 +588,65 @@ exports.browseSalons = async (req, res, next) => {
       'is_featured',
     ];
 
+    const browseAttributes = userCoords
+      ? { include: [[distanceLiteral, 'distance_km']] }
+      : baseAttributes;
+
     const findOptions = {
       where,
       distinct: true,
       subQuery: false,
       order,
-      limit,
-      offset,
-      attributes: userCoords
-        ? { include: [[distanceLiteral, 'distance_km']] }
-        : baseAttributes,
+      attributes: browseAttributes,
     };
 
-    const { count, rows: salons } = await Salon.findAndCountAll(findOptions);
+    let salons;
+    let count;
+
+    if (hasAvailableSlots) {
+      const allRows = await Salon.findAll(findOptions);
+      const allPlain = allRows.map((salon) => salon.get({ plain: true }));
+      const slotsMap = await getBatchTodayAvailabilitySummaries(allPlain);
+      const filtered = filterAndSortSalonsByAvailability(allPlain, slotsMap, { userCoords });
+      count = filtered.length;
+      salons = filtered.slice(offset, offset + limit);
+
+      const salonIds = salons.map((salon) => salon.id);
+      const [ratingMap, discountMap, serviceSalonIds] = await Promise.all([
+        getBatchSalonRatingSummaries(salonIds),
+        getBatchDiscountFlags(salonIds),
+        getSalonIdsWithActiveServices(salonIds),
+      ]);
+
+      const data = shapeBrowseSalonRows(salons, {
+        ratingMap,
+        slotsMap,
+        discountMap,
+        serviceSalonIds,
+        userCoords,
+      });
+
+      return res.json({
+        data,
+        meta: {
+          total: count,
+          limit,
+          offset,
+          has_more: offset + data.length < count,
+        },
+      });
+    }
+
+    const pagedResult = await Salon.findAndCountAll({
+      ...findOptions,
+      limit,
+      offset,
+    });
+    salons = pagedResult.rows;
+    count = pagedResult.count;
+
     const salonIds = salons.map((salon) => salon.id);
+    const salonPlain = salons.map((salon) => salon.get({ plain: true }));
 
     const [
       ratingMap,
@@ -579,30 +655,17 @@ exports.browseSalons = async (req, res, next) => {
       serviceSalonIds,
     ] = await Promise.all([
       getBatchSalonRatingSummaries(salonIds),
-      getBatchTodayAvailabilitySummaries(salons.map((salon) => salon.get({ plain: true }))),
+      getBatchTodayAvailabilitySummaries(salonPlain),
       getBatchDiscountFlags(salonIds),
       getSalonIdsWithActiveServices(salonIds),
     ]);
 
-    const data = salons.map((salon) => {
-      const salonJson = salon.get({ plain: true });
-      if (userCoords) {
-        attachDistance(salonJson, userCoords.userLat, userCoords.userLng);
-      } else {
-        shapeSalonDistanceFields(salonJson);
-      }
-
-      return shapeBrowseSalonDto(salonJson, {
-        ratingSummary: ratingMap.get(salon.id) || emptyRatingSummary(),
-        slotsToday: slotsMap.get(salon.id) || { total: 0, available: 0, status: 'unknown' },
-        discountFlags: discountMap.get(salon.id) || {
-          has_discount: false,
-          discounted_services_count: 0,
-          max_savings_percent: 0,
-        },
-        hasServices: serviceSalonIds.has(salon.id),
-        userCoords,
-      });
+    const data = shapeBrowseSalonRows(salonPlain, {
+      ratingMap,
+      slotsMap,
+      discountMap,
+      serviceSalonIds,
+      userCoords,
     });
 
     res.json({
@@ -1442,6 +1505,27 @@ exports.setOwnerSalonSlotBlock = async (req, res, next) => {
       req.user.id
     );
     res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.updateOwnerSalonPremiumBooking = async (req, res, next) => {
+  try {
+    const { salon } = await assertSalonOwnership(req.user.id, req.params.salonId);
+    const { premium_booking_fee: premiumBookingFee } = req.body;
+
+    salon.premium_booking_fee = premiumBookingFee;
+    salon.updated_by = req.user.id;
+    await salon.save();
+
+    const premiumConfig = await resolvePremiumConfigForSalon(salon);
+    res.json({
+      data: {
+        premium_booking_fee: salon.premium_booking_fee,
+        premium_config: premiumConfig,
+      },
+    });
   } catch (err) {
     next(err);
   }

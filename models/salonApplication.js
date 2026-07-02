@@ -27,6 +27,7 @@ module.exports = (sequelize, DataTypes) => {
       phone: { type: DataTypes.STRING, allowNull: false },
       opening_time: { type: DataTypes.TIME, allowNull: false },
       closing_time: { type: DataTypes.TIME, allowNull: false },
+      premium_booking_fee: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
       application_status: {
         type: DataTypes.ENUM('PENDING_APPROVAL', 'APPROVED', 'REJECTED'),
         allowNull: false,

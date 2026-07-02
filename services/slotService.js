@@ -108,6 +108,18 @@ function invalidatePremiumConfigCache() {
   loadPremiumConfig._cache = null;
 }
 
+async function resolvePremiumConfigForSalon(salon) {
+  const platform = await loadPremiumConfig();
+  const salonFee = salon?.premium_booking_fee;
+  const hasCustomFee = salonFee != null && Number(salonFee) > 0;
+  return {
+    enabled: platform.enabled,
+    fee: hasCustomFee ? Number(salonFee) : platform.fee,
+    currency: platform.currency,
+    is_custom_fee: hasCustomFee,
+  };
+}
+
 async function getOccupiedBookings(salonId, date, { attributes, transaction } = {}) {
   return Booking.findAll({
     where: {
@@ -164,7 +176,7 @@ async function buildSlotList(salon, date, { includeBookingDetails = false } = {}
     blockedBySlot.set(bookingTimeKey(o.slot_start), o);
   }
 
-  const premiumConfig = await loadPremiumConfig();
+  const premiumConfig = await resolvePremiumConfigForSalon(salon);
   const inPast = (slotStart) => isSlotInPast(dateStr, slotStart);
 
   const allHourSlots = [];
@@ -431,7 +443,7 @@ async function assertSlotBookable(salonId, date, slotStart, { isPremium = false 
     throw new AppError('This slot is not available', 400);
   }
 
-  const premiumConfig = await loadPremiumConfig();
+  const premiumConfig = await resolvePremiumConfigForSalon(salon);
   if (!premiumConfig.enabled) {
     throw new AppError('Premium booking is not available', 400);
   }
@@ -525,6 +537,7 @@ module.exports = {
   formatDateOnly,
   loadPremiumConfig,
   invalidatePremiumConfigCache,
+  resolvePremiumConfigForSalon,
   getSlotsForSalon,
   getOwnerSlotsForSalon,
   getTodayAvailabilitySummary,

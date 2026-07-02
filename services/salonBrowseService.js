@@ -137,6 +137,33 @@ function minRatingSalonExistsLiteral(sequelize, minRating) {
   )`);
 }
 
+/**
+ * Filters out fully booked salons and sorts by most open slots today.
+ * Used when has_available_slots is enabled — loads all matching salons in memory.
+ */
+function filterAndSortSalonsByAvailability(salons, slotsMap, { userCoords } = {}) {
+  const filtered = salons.filter((salon) => {
+    const summary = slotsMap.get(salon.id) || { available: 0, status: 'unknown' };
+    return summary.available > 0 && summary.status !== 'full';
+  });
+
+  filtered.sort((a, b) => {
+    const slotsA = slotsMap.get(a.id) || { available: 0 };
+    const slotsB = slotsMap.get(b.id) || { available: 0 };
+    if (slotsB.available !== slotsA.available) {
+      return slotsB.available - slotsA.available;
+    }
+    if (userCoords) {
+      const distA = a.distance_km != null ? Number(a.distance_km) : Infinity;
+      const distB = b.distance_km != null ? Number(b.distance_km) : Infinity;
+      if (distA !== distB) return distA - distB;
+    }
+    return String(a.salon_name).localeCompare(String(b.salon_name));
+  });
+
+  return filtered;
+}
+
 module.exports = {
   getBatchDiscountFlags,
   getSalonIdsWithActiveServices,
@@ -144,4 +171,5 @@ module.exports = {
   emptyRatingSummary,
   discountedSalonExistsLiteral,
   minRatingSalonExistsLiteral,
+  filterAndSortSalonsByAvailability,
 };

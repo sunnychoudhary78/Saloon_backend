@@ -2,6 +2,8 @@ const { sequelize, UserNotification } = require('../../models');
 const { QueryTypes } = require('sequelize');
 const { getBatchAvailabilitySummariesForDate } = require('../slotService');
 const { summarizeProfileCompleteness } = require('./ownerDashboardProfileCompleteness');
+const { addDaysToDateString, periodBounds } = require('./dateWindow');
+const { buildPeriodMeta } = require('./ownerDashboardPeriod');
 
 const SCHEMA = process.env.DB_SCHEMA || 'salon_booking_schema';
 
@@ -9,10 +11,21 @@ function round2(n) {
   return Math.round(Number(n) * 100) / 100;
 }
 
-function emptySummary() {
+function emptySummary(periodOpts = null) {
+  const periodMeta = periodOpts ? buildPeriodMeta(periodOpts) : {
+    key: '7d',
+    from: null,
+    to: null,
+    label: 'Last 7 days',
+    granularity: 'day',
+  };
   return {
-    bookings: { pending: 0, upcoming: 0, today: 0 },
-    revenue: { today_gross: 0 },
+    bookings: { pending: 0, upcoming: 0, today: 0, completed_in_period: 0 },
+    revenue: {
+      today_gross: 0,
+      period_gross: 0,
+      period: periodMeta,
+    },
     earnings: {
       pending: 0,
       in_batch: 0,
@@ -186,6 +199,93 @@ async function fetchTodayRevenue(scope) {
   return round2(row?.today_gross || 0);
 }
 
+async function fetchPeriodRevenue(scope, periodOpts) {
+  if (scope.salonIds.length === 0) return 0;
+
+  if (periodOpts.key === 'lifetime') {
+    const [row] = await sequelize.query(
+      `
+      SELECT COALESCE(SUM(amount), 0) AS period_gross
+      FROM "${SCHEMA}"."payments"
+      WHERE salon_id = ANY(:salonIds)
+        AND status = 'PAID'
+        AND (paid_at AT TIME ZONE :tz)::date <= :toDate
+      `,
+      {
+        replacements: {
+          salonIds: scope.salonIds,
+          toDate: periodOpts.toDate,
+          tz: scope.timezone,
+        },
+        type: QueryTypes.SELECT,
+      },
+    );
+    return round2(row?.period_gross || 0);
+  }
+
+  const bounds = periodBounds(periodOpts.fromDate, periodOpts.toDate, scope.timezone);
+  const [row] = await sequelize.query(
+    `
+    SELECT COALESCE(SUM(amount), 0) AS period_gross
+    FROM "${SCHEMA}"."payments"
+    WHERE salon_id = ANY(:salonIds)
+      AND status = 'PAID'
+      AND paid_at >= :periodStart
+      AND paid_at <= :periodEnd
+    `,
+    {
+      replacements: {
+        salonIds: scope.salonIds,
+        periodStart: bounds.start,
+        periodEnd: bounds.end,
+      },
+      type: QueryTypes.SELECT,
+    },
+  );
+
+  return round2(row?.period_gross || 0);
+}
+
+async function fetchCompletedBookingsInPeriod(scope, periodOpts) {
+  if (scope.salonIds.length === 0) return 0;
+
+  const replacements = {
+    salonIds: scope.salonIds,
+    toDate: periodOpts.toDate,
+  };
+
+  let dateFilter = 'AND booking_date <= :toDate';
+  if (periodOpts.fromDate) {
+    dateFilter = 'AND booking_date BETWEEN :fromDate AND :toDate';
+    replacements.fromDate = periodOpts.fromDate;
+  }
+
+  const [row] = await sequelize.query(
+    `
+    WITH visits AS (
+      SELECT COALESCE(booking_group_id, id) AS visit_key,
+             MAX(CASE booking_status
+               WHEN 'COMPLETED' THEN 1
+               ELSE 0
+             END) AS is_completed
+      FROM "${SCHEMA}"."bookings"
+      WHERE salon_id = ANY(:salonIds)
+        ${dateFilter}
+      GROUP BY 1
+    )
+    SELECT COUNT(*)::int AS completed_count
+    FROM visits
+    WHERE is_completed = 1
+    `,
+    {
+      replacements,
+      type: QueryTypes.SELECT,
+    },
+  );
+
+  return parseInt(row?.completed_count, 10) || 0;
+}
+
 async function fetchEarnings(scope) {
   if (scope.salonIds.length === 0) {
     return { pending: 0, in_batch: 0, pending_total: 0, settled: 0 };
@@ -250,14 +350,17 @@ async function fetchUnreadCount(userId) {
   });
 }
 
-async function buildOwnerDashboardSummary(scope) {
+async function buildOwnerDashboardSummary(scope, options = {}) {
+  const periodOpts = options.periodOpts || null;
   if (scope.salonIds.length === 0) {
-    return emptySummary();
+    return emptySummary(periodOpts);
   }
 
   const [
     bookingAgg,
     todayGross,
+    periodGross,
+    completedInPeriod,
     earnings,
     reputation,
     unreadCount,
@@ -265,6 +368,8 @@ async function buildOwnerDashboardSummary(scope) {
   ] = await Promise.all([
     fetchBookingAggregates(scope),
     fetchTodayRevenue(scope),
+    periodOpts ? fetchPeriodRevenue(scope, periodOpts) : fetchTodayRevenue(scope),
+    periodOpts ? fetchCompletedBookingsInPeriod(scope, periodOpts) : Promise.resolve(0),
     fetchEarnings(scope),
     fetchReputation(scope),
     fetchUnreadCount(scope.userId),
@@ -286,8 +391,19 @@ async function buildOwnerDashboardSummary(scope) {
       pending: bookingAgg.pending,
       upcoming: bookingAgg.upcoming,
       today: bookingAgg.today,
+      completed_in_period: completedInPeriod,
     },
-    revenue: { today_gross: todayGross },
+    revenue: {
+      today_gross: todayGross,
+      period_gross: periodGross,
+      period: periodOpts ? buildPeriodMeta(periodOpts) : {
+        key: '7d',
+        from: addDaysToDateString(scope.date, -6),
+        to: scope.date,
+        label: 'Last 7 days',
+        granularity: 'day',
+      },
+    },
     earnings,
     reputation,
     premium_bookings_count: bookingAgg.premium_active,

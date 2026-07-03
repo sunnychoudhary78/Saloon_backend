@@ -5,6 +5,7 @@ const baseDashboardQuerySchema = Joi.object({
   date: Joi.string().pattern(/^\d{4}-\d{2}-\d{2}$/).optional(),
   timezone: Joi.string().default('Asia/Kolkata'),
   v: Joi.number().integer().valid(1, 2).optional(),
+  period: Joi.string().valid('7d', '30d', 'lifetime').default('7d'),
 });
 
 const scheduleQuerySchema = baseDashboardQuerySchema.keys({

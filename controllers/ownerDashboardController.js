@@ -21,9 +21,10 @@ exports.getDashboard = async (req, res, next) => {
     const version = Number(req.dashboardQuery?.v);
     if (version === 2) {
       const scope = await resolveOwnerDashboardScope(req.user.id, dashboardOptions(req.dashboardQuery || req.query));
+      const period = req.dashboardQuery?.period || '7d';
       const payload = await buildOwnerDashboardComposite(scope, {
         scheduleLimit: 20,
-        performanceDays: 7,
+        period,
         previewLimit: 5,
       });
       return res.json(payload);

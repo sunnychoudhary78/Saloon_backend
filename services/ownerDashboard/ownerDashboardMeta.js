@@ -1,4 +1,6 @@
-function buildOwnerDashboardMeta(scope) {
+const { buildPeriodMeta } = require('./ownerDashboardPeriod');
+
+function buildOwnerDashboardMeta(scope, periodOpts = null) {
   return {
     salon_ids: scope.salonIds,
     salon_count: scope.salonIds.length,
@@ -7,6 +9,7 @@ function buildOwnerDashboardMeta(scope) {
     timezone: scope.timezone,
     currency: 'INR',
     generated_at: new Date().toISOString(),
+    period: periodOpts ? buildPeriodMeta(periodOpts) : null,
   };
 }
 

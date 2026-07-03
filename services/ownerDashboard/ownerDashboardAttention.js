@@ -197,7 +197,22 @@ async function buildOwnerDashboardAttention(scope, options = {}) {
   const previewLimit = options.previewLimit || 5;
 
   if (scope.salonIds.length === 0) {
-    return emptyAttention();
+    const payout = await fetchPayoutIssues(scope);
+    if (payout.count === 0) {
+      return emptyAttention();
+    }
+    const sections = [
+      {
+        type: 'payout_account',
+        count: payout.count,
+        severity: 'medium',
+        items: payout.items,
+      },
+    ];
+    return {
+      total_count: payout.count,
+      sections,
+    };
   }
 
   const [

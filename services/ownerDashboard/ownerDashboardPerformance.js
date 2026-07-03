@@ -1,19 +1,20 @@
 const { sequelize } = require('../../models');
 const { QueryTypes } = require('sequelize');
 const { addDaysToDateString } = require('./dateWindow');
+const { buildPeriodMeta } = require('./ownerDashboardPeriod');
 
 const SCHEMA = process.env.DB_SCHEMA || 'salon_booking_schema';
 const CACHE_TTL_MS = parseInt(process.env.OWNER_DASHBOARD_PERFORMANCE_CACHE_TTL_MS, 10) || 60_000;
 
 const performanceCache = new Map();
 
-function cacheKey(scope, days) {
+function cacheKey(scope, periodOpts) {
   const salonKey = scope.scopedSalonId || scope.salonIds.join(',') || 'none';
-  return `${scope.owner.id}:${salonKey}:${days}:${scope.timezone}`;
+  return `${scope.owner.id}:${salonKey}:${periodOpts.key}:${scope.timezone}`;
 }
 
-function getCachedPerformance(scope, days) {
-  const key = cacheKey(scope, days);
+function getCachedPerformance(scope, periodOpts) {
+  const key = cacheKey(scope, periodOpts);
   const entry = performanceCache.get(key);
   if (!entry) return null;
   if (entry.expiresAt <= Date.now()) {
@@ -23,8 +24,8 @@ function getCachedPerformance(scope, days) {
   return { ...entry.value, cached: true };
 }
 
-function setCachedPerformance(scope, days, value) {
-  const key = cacheKey(scope, days);
+function setCachedPerformance(scope, periodOpts, value) {
+  const key = cacheKey(scope, periodOpts);
   performanceCache.set(key, {
     value,
     expiresAt: Date.now() + CACHE_TTL_MS,
@@ -35,6 +36,17 @@ function round2(n) {
   return Math.round(Number(n) * 100) / 100;
 }
 
+function buildPeriodResponse(periodOpts) {
+  return {
+    key: periodOpts.key,
+    days: periodOpts.days,
+    from: periodOpts.fromDate,
+    to: periodOpts.toDate,
+    label: periodOpts.label,
+    granularity: periodOpts.chartGranularity,
+  };
+}
+
 function fillDateSeries(rows, fromDate, days, valueKey = 'count') {
   const byDate = new Map(rows.map((r) => [String(r.date).slice(0, 10), r]));
   const series = [];
@@ -43,6 +55,26 @@ function fillDateSeries(rows, fromDate, days, valueKey = 'count') {
     const row = byDate.get(date);
     series.push({
       date,
+      [valueKey]: valueKey === 'amount'
+        ? round2(row?.amount || 0)
+        : parseInt(row?.count, 10) || 0,
+    });
+  }
+  return series;
+}
+
+function fillMonthSeries(rows, fromDate, months, valueKey = 'count') {
+  const byMonth = new Map(rows.map((r) => [String(r.month).slice(0, 7), r]));
+  const series = [];
+  const [startYear, startMonth] = fromDate.split('-').map(Number);
+  for (let i = 0; i < months; i += 1) {
+    const monthIndex = startMonth - 1 + i;
+    const year = startYear + Math.floor(monthIndex / 12);
+    const month = (monthIndex % 12) + 1;
+    const monthKey = `${year}-${String(month).padStart(2, '0')}`;
+    const row = byMonth.get(monthKey);
+    series.push({
+      date: `${monthKey}-01`,
       [valueKey]: valueKey === 'amount'
         ? round2(row?.amount || 0)
         : parseInt(row?.count, 10) || 0,
@@ -81,12 +113,69 @@ async function fetchBookingTrend(scope, fromDate, toDate) {
   );
 }
 
+async function fetchMonthlyBookingTrend(scope, fromDate, toDate) {
+  if (scope.salonIds.length === 0) return [];
+
+  return sequelize.query(
+    `
+    WITH visits AS (
+      SELECT COALESCE(booking_group_id, id) AS visit_key,
+             booking_date
+      FROM "${SCHEMA}"."bookings"
+      WHERE salon_id = ANY(:salonIds)
+        AND booking_date BETWEEN :fromDate AND :toDate
+        AND booking_status NOT IN ('REJECTED', 'CANCELLED')
+      GROUP BY 1, 2
+    )
+    SELECT to_char(booking_date::date, 'YYYY-MM') AS month,
+           COUNT(*)::int AS count
+    FROM visits
+    GROUP BY 1
+    ORDER BY 1
+    `,
+    {
+      replacements: {
+        salonIds: scope.salonIds,
+        fromDate,
+        toDate,
+      },
+      type: QueryTypes.SELECT,
+    },
+  );
+}
+
 async function fetchRevenueTrend(scope, fromDate, toDate) {
   if (scope.salonIds.length === 0) return [];
 
   return sequelize.query(
     `
     SELECT (paid_at AT TIME ZONE :tz)::date AS date,
+           COALESCE(SUM(amount), 0) AS amount
+    FROM "${SCHEMA}"."payments"
+    WHERE salon_id = ANY(:salonIds)
+      AND status = 'PAID'
+      AND (paid_at AT TIME ZONE :tz)::date BETWEEN :fromDate AND :toDate
+    GROUP BY 1
+    ORDER BY 1
+    `,
+    {
+      replacements: {
+        salonIds: scope.salonIds,
+        fromDate,
+        toDate,
+        tz: scope.timezone,
+      },
+      type: QueryTypes.SELECT,
+    },
+  );
+}
+
+async function fetchMonthlyRevenueTrend(scope, fromDate, toDate) {
+  if (scope.salonIds.length === 0) return [];
+
+  return sequelize.query(
+    `
+    SELECT to_char((paid_at AT TIME ZONE :tz)::date, 'YYYY-MM') AS month,
            COALESCE(SUM(amount), 0) AS amount
     FROM "${SCHEMA}"."payments"
     WHERE salon_id = ANY(:salonIds)
@@ -146,7 +235,7 @@ async function fetchTopServices(scope, fromDate, toDate) {
   }));
 }
 
-async function fetchCustomerMix(scope, fromDate) {
+async function fetchCustomerMix(scope, fromDate, toDate) {
   if (scope.salonIds.length === 0) {
     return { new: 0, returning: 0, total_active: 0, new_percent: 0 };
   }
@@ -180,7 +269,7 @@ async function fetchCustomerMix(scope, fromDate) {
       replacements: {
         salonIds: scope.salonIds,
         fromDate,
-        toDate: scope.date,
+        toDate,
       },
       type: QueryTypes.SELECT,
     },
@@ -199,18 +288,42 @@ async function fetchCustomerMix(scope, fromDate) {
 }
 
 async function buildOwnerDashboardPerformance(scope, options = {}) {
-  const days = options.days || 7;
-  const cached = getCachedPerformance(scope, days);
+  const periodOpts = options.periodOpts;
+  if (!periodOpts) {
+    const days = options.days || 7;
+    const toDate = scope.date;
+    const fromDate = addDaysToDateString(toDate, -(days - 1));
+    return buildOwnerDashboardPerformance(scope, {
+      periodOpts: {
+        key: days === 30 ? '30d' : '7d',
+        days,
+        fromDate,
+        toDate,
+        label: days === 30 ? 'Last 30 days' : 'Last 7 days',
+        chartGranularity: 'day',
+        chartMonths: null,
+        chartFromDate: fromDate,
+      },
+    });
+  }
+
+  const cached = getCachedPerformance(scope, periodOpts);
   if (cached) return cached;
 
-  const toDate = scope.date;
-  const fromDate = addDaysToDateString(toDate, -(days - 1));
+  const isMonthly = periodOpts.chartGranularity === 'month';
+  const toDate = periodOpts.toDate;
+  const fromDate = isMonthly ? periodOpts.chartFromDate : periodOpts.fromDate;
+  const chartSpan = isMonthly ? periodOpts.chartMonths : periodOpts.days;
 
   if (scope.salonIds.length === 0) {
     const empty = {
-      period: { days, from: fromDate, to: toDate },
-      booking_trend: fillDateSeries([], fromDate, days, 'count'),
-      revenue_trend: fillDateSeries([], fromDate, days, 'amount'),
+      period: buildPeriodResponse(periodOpts),
+      booking_trend: isMonthly
+        ? fillMonthSeries([], fromDate, chartSpan, 'count')
+        : fillDateSeries([], fromDate, chartSpan, 'count'),
+      revenue_trend: isMonthly
+        ? fillMonthSeries([], fromDate, chartSpan, 'amount')
+        : fillDateSeries([], fromDate, chartSpan, 'amount'),
       top_services: [],
       customers: { new: 0, returning: 0, total_active: 0, new_percent: 0 },
       cached: false,
@@ -218,33 +331,48 @@ async function buildOwnerDashboardPerformance(scope, options = {}) {
     return empty;
   }
 
+  const customerFromDate = periodOpts.fromDate || fromDate;
+
   const [
     bookingRows,
     revenueRows,
     topServices,
     customers,
   ] = await Promise.all([
-    fetchBookingTrend(scope, fromDate, toDate),
-    fetchRevenueTrend(scope, fromDate, toDate),
-    fetchTopServices(scope, fromDate, toDate),
-    fetchCustomerMix(scope, fromDate),
+    isMonthly
+      ? fetchMonthlyBookingTrend(scope, fromDate, toDate)
+      : fetchBookingTrend(scope, fromDate, toDate),
+    isMonthly
+      ? fetchMonthlyRevenueTrend(scope, fromDate, toDate)
+      : fetchRevenueTrend(scope, fromDate, toDate),
+    fetchTopServices(scope, customerFromDate, toDate),
+    fetchCustomerMix(scope, customerFromDate, toDate),
   ]);
 
   const result = {
-    period: { days, from: fromDate, to: toDate },
-    booking_trend: fillDateSeries(bookingRows, fromDate, days, 'count'),
-    revenue_trend: fillDateSeries(
-      revenueRows.map((r) => ({ date: r.date, amount: r.amount })),
-      fromDate,
-      days,
-      'amount',
-    ),
+    period: buildPeriodResponse(periodOpts),
+    booking_trend: isMonthly
+      ? fillMonthSeries(bookingRows, fromDate, chartSpan, 'count')
+      : fillDateSeries(bookingRows, fromDate, chartSpan, 'count'),
+    revenue_trend: isMonthly
+      ? fillMonthSeries(
+        revenueRows.map((r) => ({ month: r.month, amount: r.amount })),
+        fromDate,
+        chartSpan,
+        'amount',
+      )
+      : fillDateSeries(
+        revenueRows.map((r) => ({ date: r.date, amount: r.amount })),
+        fromDate,
+        chartSpan,
+        'amount',
+      ),
     top_services: topServices,
     customers,
     cached: false,
   };
 
-  setCachedPerformance(scope, days, result);
+  setCachedPerformance(scope, periodOpts, result);
   return result;
 }
 

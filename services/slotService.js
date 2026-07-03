@@ -329,17 +329,17 @@ function summarizeSlotsForSalon(salon, bookings, overrides, dateStr) {
   return { total, available, status };
 }
 
-async function getBatchTodayAvailabilitySummaries(salons) {
+async function getBatchAvailabilitySummariesForDate(salons, dateStr) {
   if (!salons.length) return new Map();
 
-  const dateStr = todayDateString();
   const salonIds = salons.map((salon) => salon.id);
+  const normalizedDate = formatDateOnly(dateStr);
 
   const [bookings, overrides] = await Promise.all([
     Booking.findAll({
       where: {
         salon_id: { [Op.in]: salonIds },
-        booking_date: dateStr,
+        booking_date: normalizedDate,
         booking_status: { [Op.in]: ACTIVE_BOOKING_STATUSES },
       },
       attributes: ['salon_id', 'booking_time'],
@@ -348,7 +348,7 @@ async function getBatchTodayAvailabilitySummaries(salons) {
     SalonSlotOverride.findAll({
       where: {
         salon_id: { [Op.in]: salonIds },
-        slot_date: dateStr,
+        slot_date: normalizedDate,
         is_blocked: true,
         is_active: true,
       },
@@ -381,11 +381,15 @@ async function getBatchTodayAvailabilitySummaries(salons) {
         salon,
         bookingsBySalon.get(salon.id) || [],
         overridesBySalon.get(salon.id) || [],
-        dateStr,
+        normalizedDate,
       ),
     );
   }
   return summaries;
+}
+
+async function getBatchTodayAvailabilitySummaries(salons) {
+  return getBatchAvailabilitySummariesForDate(salons, todayDateString());
 }
 
 async function assertSlotBookable(salonId, date, slotStart, { isPremium = false } = {}) {
@@ -538,10 +542,12 @@ module.exports = {
   loadPremiumConfig,
   invalidatePremiumConfigCache,
   resolvePremiumConfigForSalon,
+  summarizeSlotsForSalon,
   getSlotsForSalon,
   getOwnerSlotsForSalon,
   getTodayAvailabilitySummary,
   getBatchTodayAvailabilitySummaries,
+  getBatchAvailabilitySummariesForDate,
   assertSlotBookable,
   assertAdditionalServiceBookable,
   setSlotBlocked,

@@ -29,7 +29,13 @@ const {
 const deviceTokenCtrl = require('../controllers/deviceTokenController');
 const notificationCtrl = require('../controllers/notificationController');
 const { validateListNotifications } = require('../validators/notificationValidator');
-const { uploadSalonImages, uploadProfileImage } = require('../middlewares/upload');
+const {
+  validateOwnerDashboardQuery,
+  validateOwnerDashboardScheduleQuery,
+  validateOwnerDashboardPerformanceQuery,
+  validateOwnerDashboardAttentionQuery,
+} = require('../validators/ownerDashboardValidator');
+const dashboardCtrl = require('../controllers/ownerDashboardController');
 
 // Public
 router.post('/auth/otp-request', validateOtpRequest, asyncHandler(appAuthCtrl.otpRequest));
@@ -97,7 +103,11 @@ router.get('/owner/bookings', authMiddleware, roleMiddleware(['SALON_OWNER']), a
 router.patch('/owner/bookings/:id/accept', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.acceptBooking));
 router.patch('/owner/bookings/:id/reject', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.rejectBooking));
 router.patch('/owner/bookings/:id/complete', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.completeBooking));
-router.get('/owner/dashboard', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.getOwnerDashboard));
+router.get('/owner/dashboard/summary', authMiddleware, roleMiddleware(['SALON_OWNER']), validateOwnerDashboardQuery, asyncHandler(dashboardCtrl.getSummary));
+router.get('/owner/dashboard/attention', authMiddleware, roleMiddleware(['SALON_OWNER']), validateOwnerDashboardAttentionQuery, asyncHandler(dashboardCtrl.getAttention));
+router.get('/owner/dashboard/schedule', authMiddleware, roleMiddleware(['SALON_OWNER']), validateOwnerDashboardScheduleQuery, asyncHandler(dashboardCtrl.getSchedule));
+router.get('/owner/dashboard/performance', authMiddleware, roleMiddleware(['SALON_OWNER']), validateOwnerDashboardPerformanceQuery, asyncHandler(dashboardCtrl.getPerformance));
+router.get('/owner/dashboard', authMiddleware, roleMiddleware(['SALON_OWNER']), validateOwnerDashboardQuery, asyncHandler(dashboardCtrl.getDashboard));
 router.get('/owner/earnings/summary', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.getOwnerEarningsSummary));
 router.get('/owner/earnings/transactions', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.getOwnerEarningsTransactions));
 router.get('/owner/payout-account', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.getOwnerPayoutAccount));

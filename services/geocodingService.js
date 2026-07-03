@@ -125,20 +125,34 @@ function pickBestGeocodeResult(results) {
   return best;
 }
 
-function logReverseGeocodeDiagnostics(lat, lng, data) {
+function logReverseGeocodeDiagnostics(lat, lng, data, selectedResult, mapped) {
   if (process.env.GEOCODING_DEBUG !== '1') return;
-  console.log('[geocoding] reverse', {
-    lat,
-    lng,
-    status: data.status,
-    count: data.results?.length,
+
+  console.log('[reverse-geocode]');
+  console.log('latitude:', lat);
+  console.log('longitude:', lng);
+
+  const results = data.results || [];
+  results.slice(0, 5).forEach((r, i) => {
+    console.log(`Result ${i}:`);
+    console.log('  types:', r.types ?? []);
+    console.log('  formatted_address:', r.formatted_address ?? '');
   });
-  (data.results || []).forEach((r, i) => {
-    console.log(`[geocoding] result[${i}]`, {
-      types: r.types,
-      formatted_address: r.formatted_address,
-    });
-  });
+
+  if (selectedResult) {
+    const selectedIndex = results.indexOf(selectedResult);
+    console.log('selected result:', selectedIndex >= 0 ? selectedIndex : 'unknown');
+    console.log('selected result types:', selectedResult.types ?? []);
+    console.log('selected formatted_address:', selectedResult.formatted_address ?? '');
+  }
+
+  if (mapped) {
+    console.log('mapped to Flutter:');
+    console.log('  address:', mapped.address);
+    console.log('  city:', mapped.city);
+    console.log('  state:', mapped.state);
+    console.log('  postal_code:', mapped.postal_code);
+  }
 }
 
 function mapGooglePlaceResult(result) {
@@ -281,12 +295,12 @@ async function reverseGeocodeCoordinates(latitude, longitude) {
       });
 
       if (data.status === 'OK' && Array.isArray(data.results) && data.results.length > 0) {
-        logReverseGeocodeDiagnostics(lat, lng, data);
         const best = pickBestGeocodeResult(data.results);
         const mapped = mapGooglePlaceResult({
           ...best,
           place_id: best.place_id || `geo:${lat},${lng}`,
         });
+        logReverseGeocodeDiagnostics(lat, lng, data, best, mapped);
         if (mapped) return mapped;
       }
     } catch {

@@ -29,6 +29,7 @@ const {
 const deviceTokenCtrl = require('../controllers/deviceTokenController');
 const notificationCtrl = require('../controllers/notificationController');
 const { validateListNotifications } = require('../validators/notificationValidator');
+const { uploadSalonImages, uploadProfileImage } = require('../middlewares/upload');
 const {
   validateOwnerDashboardQuery,
   validateOwnerDashboardScheduleQuery,

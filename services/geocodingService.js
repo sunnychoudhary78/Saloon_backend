@@ -8,6 +8,20 @@ const GOOGLE_PLACE_DETAILS_URL =
   'https://maps.googleapis.com/maps/api/place/details/json';
 const GOOGLE_GEOCODE_URL = 'https://maps.googleapis.com/maps/api/geocode/json';
 
+const GEOCODE_RESULT_TYPE_PRIORITY = [
+  'street_address',
+  'premise',
+  'subpremise',
+  'route',
+  'establishment',
+  'point_of_interest',
+  'neighborhood',
+  'sublocality',
+  'sublocality_level_1',
+  'sublocality_level_2',
+  'locality',
+];
+
 function getGoogleMapsApiKey() {
   return process.env.GOOGLE_MAPS_API_KEY?.trim() || '';
 }
@@ -51,7 +65,10 @@ function mapNominatimHit(hit) {
   return {
     place_id: String(hit.place_id),
     label: hit.display_name,
+    formatted_address: hit.display_name,
     address: street || hit.display_name?.split(',')[0]?.trim() || '',
+    locality: address.city || address.town || address.village || '',
+    postal_code: address.postcode || '',
     city,
     state,
     latitude,
@@ -67,20 +84,61 @@ function componentValue(components, type) {
 function parseGoogleAddressComponents(components = []) {
   const streetNumber = componentValue(components, 'street_number');
   const route = componentValue(components, 'route');
-  const sublocality =
-    componentValue(components, 'sublocality')
-    || componentValue(components, 'sublocality_level_1')
-    || componentValue(components, 'neighborhood');
+  const premise = componentValue(components, 'premise');
+  const subpremise = componentValue(components, 'subpremise');
+  const locality = componentValue(components, 'locality');
   const city =
-    componentValue(components, 'locality')
+    locality
     || componentValue(components, 'administrative_area_level_2')
     || componentValue(components, 'administrative_area_level_3');
   const state = componentValue(components, 'administrative_area_level_1');
+  const postalCode = componentValue(components, 'postal_code');
 
-  const streetParts = [streetNumber, route, sublocality].filter(Boolean);
+  const streetParts = [streetNumber, route, premise, subpremise].filter(Boolean);
   const address = streetParts.join(', ').trim();
 
-  return { address, city, state };
+  return { address, locality, city, state, postalCode };
+}
+
+function geocodeResultScore(result) {
+  const types = result?.types || [];
+  let best = Infinity;
+  for (let i = 0; i < GEOCODE_RESULT_TYPE_PRIORITY.length; i++) {
+    if (types.includes(GEOCODE_RESULT_TYPE_PRIORITY[i])) {
+      best = Math.min(best, i);
+    }
+  }
+  return best;
+}
+
+function pickBestGeocodeResult(results) {
+  if (!Array.isArray(results) || results.length === 0) return null;
+  let best = results[0];
+  let bestScore = geocodeResultScore(best);
+  for (const result of results) {
+    const score = geocodeResultScore(result);
+    if (score < bestScore) {
+      best = result;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
+function logReverseGeocodeDiagnostics(lat, lng, data) {
+  if (process.env.GEOCODING_DEBUG !== '1') return;
+  console.log('[geocoding] reverse', {
+    lat,
+    lng,
+    status: data.status,
+    count: data.results?.length,
+  });
+  (data.results || []).forEach((r, i) => {
+    console.log(`[geocoding] result[${i}]`, {
+      types: r.types,
+      formatted_address: r.formatted_address,
+    });
+  });
 }
 
 function mapGooglePlaceResult(result) {
@@ -90,15 +148,18 @@ function mapGooglePlaceResult(result) {
   const longitude = parseFloat(result.geometry?.location?.lng);
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
 
-  const { address, city, state } = parseGoogleAddressComponents(
+  const { address, locality, city, state, postalCode } = parseGoogleAddressComponents(
     result.address_components || [],
   );
-  const label = result.formatted_address || result.name || '';
+  const formattedAddress = (result.formatted_address || result.name || '').trim();
 
   return {
     place_id: String(result.place_id || ''),
-    label,
-    address: address || label.split(',')[0]?.trim() || '',
+    label: formattedAddress,
+    formatted_address: formattedAddress,
+    address: address || formattedAddress.split(',')[0]?.trim() || '',
+    locality,
+    postal_code: postalCode,
     city,
     state,
     latitude,
@@ -220,9 +281,11 @@ async function reverseGeocodeCoordinates(latitude, longitude) {
       });
 
       if (data.status === 'OK' && Array.isArray(data.results) && data.results.length > 0) {
+        logReverseGeocodeDiagnostics(lat, lng, data);
+        const best = pickBestGeocodeResult(data.results);
         const mapped = mapGooglePlaceResult({
-          ...data.results[0],
-          place_id: data.results[0].place_id || `geo:${lat},${lng}`,
+          ...best,
+          place_id: best.place_id || `geo:${lat},${lng}`,
         });
         if (mapped) return mapped;
       }

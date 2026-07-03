@@ -16,6 +16,9 @@ const {
   Coupon,
   PromotionalBanner,
   Payment,
+  PaymentLineItem,
+  SalonPayoutAccount,
+  SettlementLedger,
   sequelize,
 } = require('../models');
 const AppError = require('../middlewares/AppError');
@@ -72,22 +75,31 @@ const {
 } = require('../services/locationService');
 const { logAudit } = require('../services/auditService');
 const { normalizeApplicationType } = require('../services/salonApplicationService');
-const { searchPlaces } = require('../services/geocodingService');
+const { searchPlaces, getPlaceDetails, reverseGeocodeCoordinates } = require('../services/geocodingService');
 const {
   createOrReuseRazorpayOrder,
-  createPremiumPaymentWindow,
+  deadlineFromNow,
   findLatestPayment,
   isExpired,
   markExpired,
-  premiumPayableAmount,
-  servicePayableAmount,
   shapePayment,
   splitPayments,
 } = require('../services/paymentService');
 const {
+  loadBookingGroupById,
+  assertGroupAccepted,
+  createCheckoutPayment,
+  findActiveCheckout,
+  resolveGroupId,
+  resolvePremiumFeeForGroup,
+  getCheckoutSummary,
+} = require('../services/checkoutService');
+const {
   dispatchPaymentNotifications,
   fulfillRazorpayPayment,
+  fulfillCashPayment,
 } = require('../services/paymentFulfillmentService');
+const { encryptAccountNumber, maskAccountNumber } = require('../utils/payoutEncryption');
 
 function isSalonActive(salon) {
   return salon.status === 'ACTIVE' && salon.is_active === true;
@@ -112,7 +124,7 @@ function paymentInclude() {
     model: Payment,
     as: 'payments',
     required: false,
-    order: [['created_at', 'DESC']],
+    include: [{ model: PaymentLineItem, as: 'line_items', required: false }],
   };
 }
 
@@ -948,77 +960,98 @@ exports.createRazorpayOrder = async (req, res, next) => {
   const t = await sequelize.transaction();
   let committed = false;
   try {
-    const { booking_id: bookingId, payment_type: paymentType = 'SALON_FEE' } = req.body;
-    if (!bookingId) throw new AppError('booking_id is required', 400);
-    if (!['SALON_FEE', 'PREMIUM_FEE'].includes(paymentType)) {
-      throw new AppError('Invalid payment_type', 400);
+    const {
+      booking_group_id: bookingGroupIdBody,
+      booking_id: bookingId,
+      checkout_kind: checkoutKindBody,
+      payment_type: paymentType,
+    } = req.body;
+
+    let checkoutKind = checkoutKindBody;
+    if (!checkoutKind && paymentType === 'PREMIUM_FEE') checkoutKind = 'PREMIUM_ONLY';
+    if (!checkoutKind && paymentType === 'SALON_FEE') checkoutKind = 'SALON_FEE';
+    if (!checkoutKind) checkoutKind = 'SALON_FEE';
+    if (!['PREMIUM_ONLY', 'SALON_FEE', 'COMBINED'].includes(checkoutKind)) {
+      throw new AppError('Invalid checkout_kind', 400);
     }
 
-    const { booking } = await loadCustomerBookingForPayment(req.user.id, bookingId, t);
-    if (booking.booking_status !== 'ACCEPTED') {
-      throw new AppError('Payment is available only after salon accepts the booking', 400);
+    const customer = await Customer.findOne({ where: { user_id: req.user.id }, transaction: t });
+    if (!customer) throw new AppError('Customer profile not found', 404);
+
+    let groupId = bookingGroupIdBody;
+    if (!groupId && bookingId) {
+      const anchor = await Booking.findOne({
+        where: { id: bookingId, customer_id: customer.id },
+        transaction: t,
+      });
+      if (!anchor) throw new AppError('Booking not found', 404);
+      groupId = resolveGroupId(anchor);
+    }
+    if (!groupId) throw new AppError('booking_group_id or booking_id is required', 400);
+
+    const bookings = await loadBookingGroupById(groupId, customer.id, t);
+    assertGroupAccepted(bookings);
+
+    const isPremium = bookings.some((b) => b.booking_type === 'PREMIUM');
+    const premiumPaid = !isPremium || bookings.some(
+      (b) => b.booking_type === 'PREMIUM' && b.premium_payment_status === 'PAID',
+    );
+
+    if (checkoutKind === 'PREMIUM_ONLY' || checkoutKind === 'COMBINED') {
+      if (!isPremium) throw new AppError('This is not a premium booking', 400);
+      if (premiumPaid) throw new AppError('Premium fee is already paid', 409);
+    }
+    if (checkoutKind === 'SALON_FEE' && isPremium && !premiumPaid) {
+      throw new AppError('Pay the premium fee before salon fee payment', 400);
     }
 
-    let payment = await findLatestPayment(booking.id, paymentType, t);
+    const premiumFee = await resolvePremiumFeeForGroup(bookings);
+    const expiresAt = (checkoutKind === 'PREMIUM_ONLY' || checkoutKind === 'COMBINED')
+      ? deadlineFromNow()
+      : null;
 
-    if (paymentType === 'PREMIUM_FEE') {
-      if (booking.booking_type !== 'PREMIUM') throw new AppError('This is not a premium booking', 400);
-      if (booking.premium_payment_status === 'PAID') throw new AppError('Premium fee is already paid', 409);
+    let payment = await findActiveCheckout(groupId, checkoutKind, t);
+    if (payment?.status === 'PAID') {
+      throw new AppError('This checkout is already paid', 409);
+    }
+    if (payment?.status === 'PENDING' && payment.method === 'PAY_AT_SHOP') {
+      throw new AppError('Pay at shop is already selected for this visit', 409);
+    }
 
-      if (!payment) {
-        payment = await createPremiumPaymentWindow(booking, req.user.id, t);
+    if (!payment || payment.status !== 'PENDING' || payment.method !== 'RAZORPAY') {
+      payment = await createCheckoutPayment({
+        bookings,
+        checkoutKind,
+        method: 'RAZORPAY',
+        userId: req.user.id,
+        premiumFeeAmount: premiumFee,
+        expiresAt,
+        transaction: t,
+      });
+    }
+
+    await markExpired(payment, t);
+    if (payment.status === 'EXPIRED') {
+      if (checkoutKind === 'PREMIUM_ONLY' || checkoutKind === 'COMBINED') {
+        for (const b of bookings) {
+          if (b.booking_type === 'PREMIUM') {
+            b.premium_payment_status = 'FAILED';
+            b.updated_by = req.user.id;
+            await b.save({ transaction: t });
+          }
+        }
       }
-      if (isExpired(payment)) {
-        await markExpired(payment, t);
-        booking.premium_payment_status = 'FAILED';
-        booking.updated_by = req.user.id;
-        await booking.save({ transaction: t });
-        throw new AppError('Premium payment window has expired', 400);
-      }
-      if (payment.status !== 'PENDING') {
-        payment = await Payment.create({
-          booking_id: booking.id,
-          customer_id: booking.customer_id,
-          salon_id: booking.salon_id,
-          payment_type: 'PREMIUM_FEE',
-          amount: premiumPayableAmount(booking),
-          currency: 'INR',
-          method: 'RAZORPAY',
-          status: 'PENDING',
-          expires_at: payment.expires_at,
-          created_by: req.user.id,
-          updated_by: req.user.id,
-        }, { transaction: t });
-      }
-    } else {
-      if (booking.booking_type === 'PREMIUM' && booking.premium_payment_status !== 'PAID') {
-        throw new AppError('Pay the premium fee before salon fee payment', 400);
-      }
-      if (payment?.status === 'PAID') throw new AppError('Salon fee is already paid', 409);
-      if (payment?.status === 'PENDING' && payment.method === 'PAY_AT_SHOP') {
-        throw new AppError('Pay at shop is already selected for this booking', 409);
-      }
-      if (!payment || payment.status !== 'PENDING' || payment.method !== 'RAZORPAY') {
-        payment = await Payment.create({
-          booking_id: booking.id,
-          customer_id: booking.customer_id,
-          salon_id: booking.salon_id,
-          payment_type: 'SALON_FEE',
-          amount: servicePayableAmount(booking.service),
-          currency: 'INR',
-          method: 'RAZORPAY',
-          status: 'PENDING',
-          created_by: req.user.id,
-          updated_by: req.user.id,
-        }, { transaction: t });
-      }
+      throw new AppError('Payment window has expired', 400);
     }
 
     payment = await createOrReuseRazorpayOrder(payment, req.user.id, t);
     await t.commit();
     committed = true;
 
-    res.status(201).json({ data: shapePayment(payment, { includeRazorpayKey: true }) });
+    const reloaded = await Payment.findByPk(payment.id, {
+      include: [{ model: PaymentLineItem, as: 'line_items' }],
+    });
+    res.status(201).json({ data: shapePayment(reloaded, { includeRazorpayKey: true }) });
   } catch (err) {
     if (!committed) await t.rollback();
     next(err);
@@ -1075,42 +1108,67 @@ exports.selectPayAtShop = async (req, res, next) => {
   const t = await sequelize.transaction();
   let committed = false;
   try {
-    const { booking_id: bookingId } = req.body;
-    if (!bookingId) throw new AppError('booking_id is required', 400);
+    const { booking_group_id: bookingGroupIdBody, booking_id: bookingId } = req.body;
 
-    const { booking } = await loadCustomerBookingForPayment(req.user.id, bookingId, t);
-    if (booking.booking_status !== 'ACCEPTED') {
-      throw new AppError('Pay at shop is available only after salon accepts the booking', 400);
+    const customer = await Customer.findOne({ where: { user_id: req.user.id }, transaction: t });
+    if (!customer) throw new AppError('Customer profile not found', 404);
+
+    let groupId = bookingGroupIdBody;
+    if (!groupId && bookingId) {
+      const anchor = await Booking.findOne({
+        where: { id: bookingId, customer_id: customer.id },
+        transaction: t,
+      });
+      if (!anchor) throw new AppError('Booking not found', 404);
+      groupId = resolveGroupId(anchor);
     }
-    if (booking.booking_type === 'PREMIUM' && booking.premium_payment_status !== 'PAID') {
+    if (!groupId) throw new AppError('booking_group_id or booking_id is required', 400);
+
+    const bookings = await loadBookingGroupById(groupId, customer.id, t);
+    assertGroupAccepted(bookings);
+
+    const isPremium = bookings.some((b) => b.booking_type === 'PREMIUM');
+    const premiumPaid = !isPremium || bookings.some(
+      (b) => b.booking_type === 'PREMIUM' && b.premium_payment_status === 'PAID',
+    );
+    if (isPremium && !premiumPaid) {
       throw new AppError('Pay the premium fee before selecting salon fee payment', 400);
     }
 
-    const latest = await findLatestPayment(booking.id, 'SALON_FEE', t);
-    if (latest?.status === 'PAID') throw new AppError('Salon fee is already paid', 409);
-    if (latest?.status === 'PENDING' && latest.method === 'PAY_AT_SHOP') {
+    let payment = await findActiveCheckout(groupId, 'SALON_FEE', t);
+    if (payment?.status === 'PAID') throw new AppError('Salon fee is already paid', 409);
+    if (payment?.status === 'PENDING' && payment.method === 'PAY_AT_SHOP') {
       await t.commit();
       committed = true;
-      return res.json({ data: shapePayment(latest), booking: shapeCustomerBooking(booking) });
+      const primary = bookings[0];
+      const fullBooking = await Booking.findByPk(primary.id, {
+        include: [
+          customerSalonInclude(),
+          { model: Service, as: 'service', attributes: ['id', 'service_name', 'price', 'discount_price'] },
+          paymentInclude(),
+        ],
+      });
+      return res.json({
+        data: shapePayment(payment),
+        booking: shapeCustomerBooking(fullBooking),
+      });
     }
 
-    const payment = await Payment.create({
-      booking_id: booking.id,
-      customer_id: booking.customer_id,
-      salon_id: booking.salon_id,
-      payment_type: 'SALON_FEE',
-      amount: servicePayableAmount(booking.service),
-      currency: 'INR',
+    payment = await createCheckoutPayment({
+      bookings,
+      checkoutKind: 'SALON_FEE',
       method: 'PAY_AT_SHOP',
-      status: 'PENDING',
-      created_by: req.user.id,
-      updated_by: req.user.id,
-    }, { transaction: t });
+      userId: req.user.id,
+      premiumFeeAmount: null,
+      expiresAt: null,
+      transaction: t,
+    });
 
     await t.commit();
     committed = true;
 
-    const fullBooking = await Booking.findByPk(booking.id, {
+    const primary = bookings[0];
+    const fullBooking = await Booking.findByPk(primary.id, {
       include: [
         customerSalonInclude(),
         { model: Service, as: 'service', attributes: ['id', 'service_name', 'price', 'discount_price'] },
@@ -1120,6 +1178,17 @@ exports.selectPayAtShop = async (req, res, next) => {
     res.json({ data: shapePayment(payment), booking: shapeCustomerBooking(fullBooking) });
   } catch (err) {
     if (!committed) await t.rollback();
+    next(err);
+  }
+};
+
+exports.getCheckoutSummary = async (req, res, next) => {
+  try {
+    const customer = await Customer.findOne({ where: { user_id: req.user.id } });
+    if (!customer) throw new AppError('Customer profile not found', 404);
+    const data = await getCheckoutSummary(customer.id, req.params.groupId);
+    res.json({ data });
+  } catch (err) {
     next(err);
   }
 };
@@ -1191,6 +1260,37 @@ exports.searchPlaces = async (req, res, next) => {
 
     const limit = Math.min(parseInt(req.query.limit, 10) || 5, 10);
     const data = await searchPlaces(q, { limit });
+    res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.getPlaceDetails = async (req, res, next) => {
+  try {
+    const placeId = String(req.query.place_id || '').trim();
+    if (!placeId) throw new AppError('place_id is required', 400);
+
+    const data = await getPlaceDetails(placeId);
+    if (!data) throw new AppError('Place not found', 404);
+
+    res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.reverseGeocodePlace = async (req, res, next) => {
+  try {
+    const lat = parseFloat(req.query.lat);
+    const lng = parseFloat(req.query.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      throw new AppError('lat and lng are required', 400);
+    }
+
+    const data = await reverseGeocodeCoordinates(lat, lng);
+    if (!data) throw new AppError('Could not resolve address for coordinates', 404);
+
     res.json({ data });
   } catch (err) {
     next(err);
@@ -1328,9 +1428,6 @@ exports.acceptBooking = async (req, res, next) => {
       item.responded_at = new Date();
       item.updated_by = req.user.id;
       await item.save({ transaction: t });
-      if (hasPremiumFee(item)) {
-        await createPremiumPaymentWindow(item, req.user.id, t);
-      }
     }
     await t.commit();
     committed = true;
@@ -1574,6 +1671,207 @@ exports.uploadProfileImage = async (req, res, next) => {
     );
 
     res.status(201).json({ data: { url } });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.confirmBookingGroupCash = async (req, res, next) => {
+  const t = await sequelize.transaction();
+  let committed = false;
+  try {
+    const groupId = req.params.groupId;
+    const owner = await getSalonOwnerForUser(req.user.id);
+    if (!owner) throw new AppError('Salon owner profile not found', 404);
+
+    const bookings = await Booking.findAll({
+      where: { booking_group_id: groupId },
+      transaction: t,
+    });
+    const groupBookings = bookings.length > 0
+      ? bookings
+      : await Booking.findAll({ where: { id: groupId }, transaction: t });
+    if (groupBookings.length === 0) throw new AppError('Booking group not found', 404);
+
+    await assertSalonOwnership(req.user.id, groupBookings[0].salon_id);
+
+    const payment = await Payment.findOne({
+      where: {
+        booking_group_id: groupId,
+        checkout_kind: 'SALON_FEE',
+        method: 'PAY_AT_SHOP',
+        status: 'PENDING',
+      },
+      include: [{ model: PaymentLineItem, as: 'line_items' }],
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
+    if (!payment) throw new AppError('No pending pay-at-shop checkout for this visit', 404);
+
+    const { confirmed_amount: confirmedAmount } = req.body;
+    const result = await fulfillCashPayment(payment.id, req.user.id, { confirmedAmount }, t);
+
+    await t.commit();
+    committed = true;
+
+    if (!result.alreadyPaid && result.notifications) {
+      dispatchPaymentNotifications(result.notifications);
+    }
+
+    res.json({ data: shapePayment(result.payment) });
+  } catch (err) {
+    if (!committed) await t.rollback();
+    next(err);
+  }
+};
+
+exports.getOwnerEarningsSummary = async (req, res, next) => {
+  try {
+    const owner = await getSalonOwnerForUser(req.user.id);
+    if (!owner) throw new AppError('Salon owner profile not found', 404);
+
+    const salons = await Salon.findAll({ where: { owner_id: owner.id }, attributes: ['id'] });
+    const salonIds = salons.map((s) => s.id);
+    if (salonIds.length === 0) {
+      return res.json({ data: { pending_total: 0, settled_total: 0 } });
+    }
+
+    const { Op } = require('sequelize');
+    const pending = await SettlementLedger.sum('amount', {
+      where: {
+        salon_id: { [Op.in]: salonIds },
+        status: 'PENDING',
+        entry_type: { [Op.in]: ['SERVICE_SALON_NET', 'PREMIUM_SALON'] },
+      },
+    });
+    const settled = await SettlementLedger.sum('amount', {
+      where: {
+        salon_id: { [Op.in]: salonIds },
+        status: 'SETTLED',
+        entry_type: { [Op.in]: ['SERVICE_SALON_NET', 'PREMIUM_SALON'] },
+      },
+    });
+
+    res.json({
+      data: {
+        pending_total: Number(pending) || 0,
+        settled_total: Number(settled) || 0,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.getOwnerEarningsTransactions = async (req, res, next) => {
+  try {
+    const owner = await getSalonOwnerForUser(req.user.id);
+    if (!owner) throw new AppError('Salon owner profile not found', 404);
+
+    const salons = await Salon.findAll({ where: { owner_id: owner.id }, attributes: ['id'] });
+    const salonIds = salons.map((s) => s.id);
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.max(parseInt(req.query.limit, 10) || 20, 1);
+    const offset = (page - 1) * limit;
+
+    const { Op } = require('sequelize');
+    const { count, rows } = await SettlementLedger.findAndCountAll({
+      where: {
+        salon_id: { [Op.in]: salonIds },
+        entry_type: { [Op.in]: ['SERVICE_SALON_NET', 'PREMIUM_SALON'] },
+      },
+      order: [['created_at', 'DESC']],
+      limit,
+      offset,
+    });
+
+    res.json({
+      data: rows.map((r) => r.get({ plain: true })),
+      meta: { total: count, page, limit, totalPages: Math.ceil(count / limit) },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.getOwnerPayoutAccount = async (req, res, next) => {
+  try {
+    const owner = await getSalonOwnerForUser(req.user.id);
+    if (!owner) throw new AppError('Salon owner profile not found', 404);
+
+    const account = await SalonPayoutAccount.findOne({
+      where: { salon_owner_id: owner.id, is_primary: true, is_active: true },
+    });
+    if (!account) return res.json({ data: null });
+
+    const plain = account.get({ plain: true });
+    res.json({
+      data: {
+        ...plain,
+        account_number_masked: maskAccountNumber(
+          require('../utils/payoutEncryption').decryptAccountNumber(plain.account_number_encrypted),
+        ),
+        account_number_encrypted: undefined,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.upsertOwnerPayoutAccount = async (req, res, next) => {
+  try {
+    const owner = await getSalonOwnerForUser(req.user.id);
+    if (!owner) throw new AppError('Salon owner profile not found', 404);
+
+    const {
+      account_holder_name: accountHolderName,
+      account_number: accountNumber,
+      ifsc_code: ifscCode,
+      upi_id: upiId,
+      salon_id: salonId,
+    } = req.body;
+
+    if (!accountHolderName || !accountNumber || !ifscCode) {
+      throw new AppError('account_holder_name, account_number, and ifsc_code are required', 400);
+    }
+
+    let account = await SalonPayoutAccount.findOne({
+      where: { salon_owner_id: owner.id, is_primary: true },
+    });
+
+    const payload = {
+      salon_owner_id: owner.id,
+      salon_id: salonId || null,
+      account_holder_name: accountHolderName,
+      account_number_encrypted: encryptAccountNumber(accountNumber),
+      ifsc_code: ifscCode.toUpperCase(),
+      upi_id: upiId || null,
+      is_primary: true,
+      verification_status: 'PENDING',
+      updated_by: req.user.id,
+    };
+
+    if (account) {
+      Object.assign(account, payload);
+      await account.save();
+    } else {
+      account = await SalonPayoutAccount.create({
+        ...payload,
+        created_by: req.user.id,
+      });
+    }
+
+    res.json({
+      data: {
+        id: account.id,
+        account_holder_name: account.account_holder_name,
+        ifsc_code: account.ifsc_code,
+        upi_id: account.upi_id,
+        verification_status: account.verification_status,
+        account_number_masked: maskAccountNumber(accountNumber),
+      },
+    });
   } catch (err) {
     next(err);
   }

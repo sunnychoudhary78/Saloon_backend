@@ -80,7 +80,9 @@ async function createOrReuseRazorpayOrder(payment, userId, transaction = null) {
       receipt: `pay_${payment.id.replace(/-/g, '').slice(0, 32)}`,
       notes: {
         booking_id: payment.booking_id,
+        booking_group_id: payment.booking_group_id,
         payment_id: payment.id,
+        checkout_kind: payment.checkout_kind,
         payment_type: payment.payment_type,
       },
     });
@@ -93,6 +95,21 @@ async function createOrReuseRazorpayOrder(payment, userId, transaction = null) {
   return payment;
 }
 
+function splitPayments(payments = []) {
+  const sorted = [...payments].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  const premiumPayment = sorted.find(
+    (p) => p.checkout_kind === 'PREMIUM_ONLY'
+      || p.checkout_kind === 'COMBINED'
+      || p.payment_type === 'PREMIUM_FEE',
+  ) || null;
+  const salonFeePayment = sorted.find(
+    (p) => p.checkout_kind === 'SALON_FEE'
+      || p.checkout_kind === 'COMBINED'
+      || (p.payment_type === 'SALON_FEE' && p.checkout_kind == null),
+  ) || null;
+  return { premium_payment: premiumPayment, salon_fee_payment: salonFeePayment };
+}
+
 function shapePayment(payment, { includeRazorpayKey = false } = {}) {
   if (!payment) return null;
   const plain = typeof payment.get === 'function' ? payment.get({ plain: true }) : payment;
@@ -100,20 +117,19 @@ function shapePayment(payment, { includeRazorpayKey = false } = {}) {
     ...plain,
     amount: Number(plain.amount),
     amount_paise: razorpayService.amountToPaise(plain.amount),
+    line_items: (plain.line_items || []).map((line) => ({
+      ...line,
+      gross_amount: Number(line.gross_amount),
+      commission_amount: Number(line.commission_amount),
+      platform_amount: Number(line.platform_amount),
+      salon_net_amount: Number(line.salon_net_amount),
+    })),
   };
   if (shaped.status === 'PENDING' && isExpired(shaped)) {
     shaped.status = 'EXPIRED';
   }
   if (includeRazorpayKey) shaped.razorpay_key_id = razorpayService.getKeyId();
   return shaped;
-}
-
-function splitPayments(payments = []) {
-  const sorted = [...payments].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-  return {
-    premium_payment: sorted.find((p) => p.payment_type === 'PREMIUM_FEE') || null,
-    salon_fee_payment: sorted.find((p) => p.payment_type === 'SALON_FEE') || null,
-  };
 }
 
 module.exports = {

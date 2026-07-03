@@ -1,7 +1,15 @@
-const { Payment, Booking, Service, Customer, Salon } = require('../models');
+const {
+  Payment,
+  PaymentLineItem,
+  Booking,
+  Service,
+  Customer,
+  Salon,
+} = require('../models');
 const AppError = require('../middlewares/AppError');
 const { verifyPaymentSignature, amountToPaise } = require('./razorpayService');
 const { markExpired } = require('./paymentService');
+const { createFromPayment } = require('./settlementLedgerService');
 const {
   notifyPremiumPayment,
   notifyBookingPayment,
@@ -28,7 +36,21 @@ async function loadPaymentForFulfillment(orderId, transaction) {
   if (!orderId) return null;
   return Payment.findOne({
     where: { razorpay_order_id: orderId },
-    include: [paymentBookingInclude()],
+    include: [
+      paymentBookingInclude(),
+      { model: PaymentLineItem, as: 'line_items' },
+    ],
+    transaction,
+    lock: transaction ? { level: transaction.LOCK.UPDATE, of: Payment } : undefined,
+  });
+}
+
+async function loadPaymentById(paymentId, transaction) {
+  return Payment.findByPk(paymentId, {
+    include: [
+      paymentBookingInclude(),
+      { model: PaymentLineItem, as: 'line_items' },
+    ],
     transaction,
     lock: transaction ? { level: transaction.LOCK.UPDATE, of: Payment } : undefined,
   });
@@ -44,8 +66,77 @@ function dispatchPaymentNotifications(notifications) {
   }
 }
 
+async function updatePremiumStatusForGroup(payment, status, userId, transaction) {
+  const includesPremium = payment.checkout_kind === 'PREMIUM_ONLY'
+    || payment.checkout_kind === 'COMBINED';
+  if (!includesPremium) return null;
+
+  const groupId = payment.booking_group_id || payment.booking_id;
+  const bookings = await Booking.findAll({
+    where: groupId === payment.booking_id
+      ? { id: payment.booking_id }
+      : { booking_group_id: groupId },
+    transaction,
+  });
+
+  for (const booking of bookings) {
+    if (booking.booking_type === 'PREMIUM') {
+      booking.premium_payment_status = status;
+      booking.updated_by = userId;
+      await booking.save({ transaction });
+    }
+  }
+
+  const premiumBooking = bookings.find((b) => b.booking_type === 'PREMIUM');
+  return premiumBooking?.id || payment.booking_id;
+}
+
+async function fulfillPaidPayment(payment, {
+  updatedByUserId = null,
+  paymentId = null,
+  signature = null,
+  transaction,
+}) {
+  payment.status = 'PAID';
+  if (paymentId) payment.razorpay_payment_id = paymentId;
+  if (signature) payment.razorpay_signature = signature;
+  payment.paid_at = new Date();
+  payment.updated_by = updatedByUserId;
+  await payment.save({ transaction });
+
+  const lineItems = payment.line_items || [];
+  for (const line of lineItems) {
+    line.status = 'PAID';
+    await line.save({ transaction });
+  }
+
+  const notifications = { premiumBookingId: null, salonFee: null };
+
+  if (payment.checkout_kind === 'PREMIUM_ONLY' || payment.checkout_kind === 'COMBINED') {
+    notifications.premiumBookingId = await updatePremiumStatusForGroup(
+      payment,
+      'PAID',
+      updatedByUserId,
+      transaction,
+    );
+  }
+
+  if (payment.checkout_kind === 'SALON_FEE' || payment.checkout_kind === 'COMBINED') {
+    notifications.salonFee = {
+      bookingId: payment.booking_id,
+      amount: payment.amount,
+    };
+  } else if (payment.checkout_kind === 'PREMIUM_ONLY') {
+    notifications.premiumBookingId = notifications.premiumBookingId || payment.booking_id;
+  }
+
+  await createFromPayment(payment, transaction);
+
+  return notifications;
+}
+
 /**
- * Marks a Razorpay payment as PAID. Used by client verify and payment.captured webhooks.
+ * Marks a Razorpay payment as PAID. Uses snapshot values only — never reads finance settings.
  */
 async function fulfillRazorpayPayment({
   orderId,
@@ -87,7 +178,7 @@ async function fulfillRazorpayPayment({
     throw new AppError(`Payment is ${payment.status.toLowerCase()}`, 400);
   }
 
-  if (payment.booking.booking_status !== 'ACCEPTED') {
+  if (payment.booking?.booking_status !== 'ACCEPTED') {
     throw new AppError('This booking is no longer active for payment', 400);
   }
 
@@ -98,10 +189,8 @@ async function fulfillRazorpayPayment({
       payment.failure_reason = 'Razorpay signature verification failed';
       payment.updated_by = updatedByUserId;
       await payment.save({ transaction });
-      if (payment.payment_type === 'PREMIUM_FEE') {
-        payment.booking.premium_payment_status = 'FAILED';
-        payment.booking.updated_by = updatedByUserId;
-        await payment.booking.save({ transaction });
+      if (payment.checkout_kind === 'PREMIUM_ONLY' || payment.payment_type === 'PREMIUM_FEE') {
+        await updatePremiumStatusForGroup(payment, 'FAILED', updatedByUserId, transaction);
       }
       throw new AppError('Payment verification failed', 400);
     }
@@ -114,30 +203,48 @@ async function fulfillRazorpayPayment({
     }
   }
 
-  payment.status = 'PAID';
-  payment.razorpay_payment_id = paymentId;
-  if (signature) payment.razorpay_signature = signature;
-  payment.paid_at = new Date();
-  payment.updated_by = updatedByUserId;
-  await payment.save({ transaction });
-
-  const notifications = { premiumBookingId: null, salonFee: null };
-
-  if (payment.payment_type === 'PREMIUM_FEE') {
-    payment.booking.premium_payment_status = 'PAID';
-    payment.booking.updated_by = updatedByUserId;
-    await payment.booking.save({ transaction });
-    notifications.premiumBookingId = payment.booking_id;
-  } else if (payment.payment_type === 'SALON_FEE') {
-    notifications.salonFee = { bookingId: payment.booking_id, amount: payment.amount };
-  }
+  const notifications = await fulfillPaidPayment(payment, {
+    updatedByUserId,
+    paymentId,
+    signature,
+    transaction,
+  });
 
   return { found: true, alreadyPaid: false, payment, notifications };
 }
 
-/**
- * Records a failed Razorpay attempt from payment.failed webhooks.
- */
+async function fulfillCashPayment(paymentId, ownerUserId, { confirmedAmount }, transaction) {
+  const payment = await loadPaymentById(paymentId, transaction);
+  if (!payment) throw new AppError('Payment not found', 404);
+  if (payment.method !== 'PAY_AT_SHOP') {
+    throw new AppError('This payment is not a pay-at-shop checkout', 400);
+  }
+  if (payment.status === 'PAID') {
+    return { alreadyPaid: true, payment, notifications: null };
+  }
+  if (payment.status !== 'PENDING') {
+    throw new AppError(`Payment is ${payment.status.toLowerCase()}`, 400);
+  }
+
+  payment.status = 'PAID';
+  payment.cash_confirmed = true;
+  payment.cash_confirmed_amount = confirmedAmount != null
+    ? Number(confirmedAmount)
+    : Number(payment.amount);
+  payment.cash_confirmed_at = new Date();
+  payment.cash_confirmed_by = ownerUserId;
+  payment.paid_at = new Date();
+  payment.updated_by = ownerUserId;
+  await payment.save({ transaction });
+
+  const notifications = await fulfillPaidPayment(payment, {
+    updatedByUserId: ownerUserId,
+    transaction,
+  });
+
+  return { alreadyPaid: false, payment, notifications };
+}
+
 async function markRazorpayPaymentFailed({
   orderId,
   paymentId = null,
@@ -154,9 +261,8 @@ async function markRazorpayPaymentFailed({
   payment.failure_reason = failureReason;
   await payment.save({ transaction });
 
-  if (payment.payment_type === 'PREMIUM_FEE') {
-    payment.booking.premium_payment_status = 'FAILED';
-    await payment.booking.save({ transaction });
+  if (payment.checkout_kind === 'PREMIUM_ONLY' || payment.payment_type === 'PREMIUM_FEE') {
+    await updatePremiumStatusForGroup(payment, 'FAILED', null, transaction);
   }
 
   return { found: true, updated: true, payment };
@@ -165,6 +271,7 @@ async function markRazorpayPaymentFailed({
 module.exports = {
   dispatchPaymentNotifications,
   fulfillRazorpayPayment,
+  fulfillCashPayment,
   loadPaymentForFulfillment,
   markRazorpayPaymentFailed,
 };

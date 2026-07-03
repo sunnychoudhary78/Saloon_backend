@@ -1,9 +1,11 @@
 const Joi = require('joi');
 
 const createRazorpayOrderSchema = Joi.object({
-  booking_id: Joi.string().uuid().required(),
-  payment_type: Joi.string().valid('SALON_FEE', 'PREMIUM_FEE').default('SALON_FEE'),
-});
+  booking_id: Joi.string().uuid().optional(),
+  booking_group_id: Joi.string().uuid().optional(),
+  checkout_kind: Joi.string().valid('PREMIUM_ONLY', 'SALON_FEE', 'COMBINED').optional(),
+  payment_type: Joi.string().valid('SALON_FEE', 'PREMIUM_FEE').optional(),
+}).or('booking_id', 'booking_group_id');
 
 const verifyRazorpayPaymentSchema = Joi.object({
   razorpay_order_id: Joi.string().trim().min(1).required(),
@@ -12,8 +14,9 @@ const verifyRazorpayPaymentSchema = Joi.object({
 });
 
 const payAtShopSchema = Joi.object({
-  booking_id: Joi.string().uuid().required(),
-});
+  booking_id: Joi.string().uuid().optional(),
+  booking_group_id: Joi.string().uuid().optional(),
+}).or('booking_id', 'booking_group_id');
 
 function validate(schema) {
   return (req, res, next) => {

@@ -55,6 +55,8 @@ router.get('/banners', authMiddleware, asyncHandler(ctrl.getBanners));
 router.post('/coupons/validate', authMiddleware, asyncHandler(ctrl.validateCoupon));
 router.get('/service-categories', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.getServiceCategories));
 router.get('/places/search', authMiddleware, roleMiddleware(['CUSTOMER', 'SALON_OWNER']), asyncHandler(ctrl.searchPlaces));
+router.get('/places/details', authMiddleware, roleMiddleware(['CUSTOMER', 'SALON_OWNER']), asyncHandler(ctrl.getPlaceDetails));
+router.get('/places/reverse', authMiddleware, roleMiddleware(['CUSTOMER', 'SALON_OWNER']), asyncHandler(ctrl.reverseGeocodePlace));
 
 // Customer
 router.get('/salons', authMiddleware, roleMiddleware(['CUSTOMER', 'SALON_OWNER']), asyncHandler(ctrl.browseSalons));
@@ -65,6 +67,7 @@ router.get('/premium-booking/config', authMiddleware, roleMiddleware(['CUSTOMER'
 router.post('/bookings', authMiddleware, roleMiddleware(['CUSTOMER']), validateBooking, asyncHandler(ctrl.createBooking));
 router.get('/bookings', authMiddleware, roleMiddleware(['CUSTOMER']), asyncHandler(ctrl.getMyBookings));
 router.patch('/bookings/:id/cancel', authMiddleware, roleMiddleware(['CUSTOMER']), asyncHandler(ctrl.cancelBooking));
+router.get('/booking-groups/:groupId/checkout-summary', authMiddleware, roleMiddleware(['CUSTOMER']), asyncHandler(ctrl.getCheckoutSummary));
 router.post('/payments/razorpay/order', authMiddleware, roleMiddleware(['CUSTOMER']), validateCreateRazorpayOrder, asyncHandler(ctrl.createRazorpayOrder));
 router.post('/payments/razorpay/verify', authMiddleware, roleMiddleware(['CUSTOMER']), validateVerifyRazorpayPayment, asyncHandler(ctrl.verifyRazorpayPayment));
 router.post('/payments/pay-at-shop', authMiddleware, roleMiddleware(['CUSTOMER']), validatePayAtShop, asyncHandler(ctrl.selectPayAtShop));
@@ -95,6 +98,11 @@ router.patch('/owner/bookings/:id/accept', authMiddleware, roleMiddleware(['SALO
 router.patch('/owner/bookings/:id/reject', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.rejectBooking));
 router.patch('/owner/bookings/:id/complete', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.completeBooking));
 router.get('/owner/dashboard', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.getOwnerDashboard));
+router.get('/owner/earnings/summary', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.getOwnerEarningsSummary));
+router.get('/owner/earnings/transactions', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.getOwnerEarningsTransactions));
+router.get('/owner/payout-account', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.getOwnerPayoutAccount));
+router.put('/owner/payout-account', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.upsertOwnerPayoutAccount));
+router.patch('/owner/booking-groups/:groupId/confirm-cash', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.confirmBookingGroupCash));
 router.get('/owner/reviews', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.getOwnerReviews));
 
 module.exports = router;

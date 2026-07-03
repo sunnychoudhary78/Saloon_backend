@@ -64,6 +64,10 @@ app.use('/api/reviews', require('./routes/reviewRoutes'));
 app.use('/api/coupons', require('./routes/couponRoutes'));
 app.use('/api/promotional-banners', require('./routes/promotionalBannerRoutes'));
 app.use('/api/platform-settings', require('./routes/platformSettingRoutes'));
+app.use('/api/finance-settings', require('./routes/financeSettingsRoutes'));
+app.use('/api/payments', require('./routes/paymentRoutes'));
+app.use('/api/settlements', require('./routes/settlementRoutes'));
+app.use('/api/salon-payout-accounts', require('./routes/salonPayoutAccountRoutes'));
 app.use('/api/audit-logs', require('./routes/auditLogRoutes'));
 
 // Infrastructure

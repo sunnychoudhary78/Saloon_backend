@@ -3,10 +3,14 @@ const {
   SettlementBatch,
   SettlementLedger,
   PaymentLineItem,
+  Payment,
   Salon,
   sequelize,
 } = require('../models');
 const AppError = require('../middlewares/AppError');
+
+const SALON_NET_TYPES = ['SERVICE_SALON_NET', 'PREMIUM_SALON'];
+const CASH_FEE_TYPES = ['SERVICE_COMMISSION', 'PREMIUM_PLATFORM'];
 
 async function generateBatchNumber(transaction = null) {
   const today = new Date();
@@ -28,6 +32,57 @@ async function generateBatchNumber(transaction = null) {
   return `${prefix}${String(seq).padStart(4, '0')}`;
 }
 
+/**
+ * Attach pending pay-at-salon platform fees up to available salon-net total
+ * so the batch payout is never negative.
+ */
+async function selectCashFeesForBatch(salonId, availableNet, transaction) {
+  if (availableNet <= 0) return [];
+
+  const candidates = await SettlementLedger.findAll({
+    where: {
+      salon_id: salonId,
+      status: 'PENDING',
+      entry_type: { [Op.in]: CASH_FEE_TYPES },
+    },
+    include: [{
+      model: Payment,
+      as: 'payment',
+      attributes: ['id', 'method'],
+      required: true,
+      where: { method: 'PAY_AT_SHOP' },
+    }],
+    order: [['created_at', 'ASC']],
+    transaction,
+    lock: transaction.LOCK.UPDATE,
+  });
+
+  const selected = [];
+  let remaining = availableNet;
+  for (const entry of candidates) {
+    const amount = Number(entry.amount);
+    if (amount <= 0) continue;
+    if (amount > remaining) continue;
+    selected.push(entry);
+    remaining = Math.round((remaining - amount) * 100) / 100;
+    if (remaining <= 0) break;
+  }
+  return selected;
+}
+
+async function markEntryInBatch(entry, batchId, transaction) {
+  entry.status = 'IN_BATCH';
+  entry.settlement_batch_id = batchId;
+  await entry.save({ transaction });
+
+  if (entry.payment_line_item_id) {
+    await PaymentLineItem.update(
+      { settlement_status: 'IN_BATCH', settlement_batch_id: batchId },
+      { where: { id: entry.payment_line_item_id }, transaction },
+    );
+  }
+}
+
 async function createBatch({ salonId, ledgerEntryIds, periodStart, periodEnd, notes, userId }) {
   const t = await sequelize.transaction();
   try {
@@ -36,7 +91,7 @@ async function createBatch({ salonId, ledgerEntryIds, periodStart, periodEnd, no
         id: { [Op.in]: ledgerEntryIds },
         salon_id: salonId,
         status: 'PENDING',
-        entry_type: { [Op.in]: ['SERVICE_SALON_NET', 'PREMIUM_SALON'] },
+        entry_type: { [Op.in]: SALON_NET_TYPES },
       },
       transaction: t,
       lock: t.LOCK.UPDATE,
@@ -46,13 +101,17 @@ async function createBatch({ salonId, ledgerEntryIds, periodStart, periodEnd, no
       throw new AppError('No pending salon earnings found for batch', 400);
     }
 
-    const totalSalonNet = entries.reduce((sum, e) => sum + Number(e.amount), 0);
+    const grossSalonNet = entries.reduce((sum, e) => sum + Number(e.amount), 0);
+    const cashFees = await selectCashFeesForBatch(salonId, grossSalonNet, t);
+    const feeTotal = cashFees.reduce((sum, e) => sum + Number(e.amount), 0);
+    const totalSalonNet = Math.round((grossSalonNet - feeTotal) * 100) / 100;
+
     const batch = await SettlementBatch.create({
       batch_number: await generateBatchNumber(t),
       salon_id: salonId,
       period_start: periodStart || null,
       period_end: periodEnd || null,
-      total_salon_net: Math.round(totalSalonNet * 100) / 100,
+      total_salon_net: totalSalonNet,
       status: 'DRAFT',
       notes: notes || null,
       created_by: userId,
@@ -60,16 +119,10 @@ async function createBatch({ salonId, ledgerEntryIds, periodStart, periodEnd, no
     }, { transaction: t });
 
     for (const entry of entries) {
-      entry.status = 'IN_BATCH';
-      entry.settlement_batch_id = batch.id;
-      await entry.save({ transaction: t });
-
-      if (entry.payment_line_item_id) {
-        await PaymentLineItem.update(
-          { settlement_status: 'IN_BATCH', settlement_batch_id: batch.id },
-          { where: { id: entry.payment_line_item_id }, transaction: t },
-        );
-      }
+      await markEntryInBatch(entry, batch.id, t);
+    }
+    for (const entry of cashFees) {
+      await markEntryInBatch(entry, batch.id, t);
     }
 
     await t.commit();

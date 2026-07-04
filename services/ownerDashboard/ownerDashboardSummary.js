@@ -32,6 +32,7 @@ function emptySummary(periodOpts = null) {
       pending_total: 0,
       settled: 0,
       collected_at_salon: 0,
+      platform_fee_owed: 0,
     },
     reputation: { average_rating: null, review_count: 0 },
     premium_bookings_count: 0,
@@ -295,19 +296,37 @@ async function fetchEarnings(scope) {
       pending_total: 0,
       settled: 0,
       collected_at_salon: 0,
+      platform_fee_owed: 0,
     };
   }
 
   const [row] = await sequelize.query(
     `
     SELECT
-      COALESCE(SUM(amount) FILTER (WHERE status = 'PENDING'), 0) AS pending,
-      COALESCE(SUM(amount) FILTER (WHERE status = 'IN_BATCH'), 0) AS in_batch,
-      COALESCE(SUM(amount) FILTER (WHERE status = 'SETTLED'), 0) AS settled,
-      COALESCE(SUM(amount) FILTER (WHERE status = 'COLLECTED'), 0) AS collected_at_salon
-    FROM "${SCHEMA}"."settlement_ledger"
-    WHERE salon_id IN (:salonIds)
-      AND entry_type IN ('SERVICE_SALON_NET', 'PREMIUM_SALON')
+      COALESCE(SUM(sl.amount) FILTER (
+        WHERE sl.status = 'PENDING'
+          AND sl.entry_type IN ('SERVICE_SALON_NET', 'PREMIUM_SALON')
+      ), 0) AS pending,
+      COALESCE(SUM(sl.amount) FILTER (
+        WHERE sl.status = 'IN_BATCH'
+          AND sl.entry_type IN ('SERVICE_SALON_NET', 'PREMIUM_SALON')
+      ), 0) AS in_batch,
+      COALESCE(SUM(sl.amount) FILTER (
+        WHERE sl.status = 'SETTLED'
+          AND sl.entry_type IN ('SERVICE_SALON_NET', 'PREMIUM_SALON')
+      ), 0) AS settled,
+      COALESCE(SUM(sl.amount) FILTER (
+        WHERE sl.status = 'COLLECTED'
+          AND sl.entry_type IN ('SERVICE_SALON_NET', 'PREMIUM_SALON')
+      ), 0) AS collected_at_salon,
+      COALESCE(SUM(sl.amount) FILTER (
+        WHERE sl.status = 'PENDING'
+          AND sl.entry_type IN ('SERVICE_COMMISSION', 'PREMIUM_PLATFORM')
+          AND p.method = 'PAY_AT_SHOP'
+      ), 0) AS platform_fee_owed
+    FROM "${SCHEMA}"."settlement_ledger" sl
+    LEFT JOIN "${SCHEMA}"."payments" p ON p.id = sl.payment_id
+    WHERE sl.salon_id IN (:salonIds)
     `,
     {
       replacements: { salonIds: scope.salonIds },
@@ -317,12 +336,15 @@ async function fetchEarnings(scope) {
 
   const pending = round2(row?.pending || 0);
   const inBatch = round2(row?.in_batch || 0);
+  const platformFeeOwed = round2(row?.platform_fee_owed || 0);
+  const grossPending = round2(pending + inBatch);
   return {
     pending,
     in_batch: inBatch,
-    pending_total: round2(pending + inBatch),
+    pending_total: round2(Math.max(0, grossPending - platformFeeOwed)),
     settled: round2(row?.settled || 0),
     collected_at_salon: round2(row?.collected_at_salon || 0),
+    platform_fee_owed: platformFeeOwed,
   };
 }
 

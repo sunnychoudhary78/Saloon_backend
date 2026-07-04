@@ -1,6 +1,6 @@
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
-const { Op } = require('sequelize');
+const { Op, QueryTypes } = require('sequelize');
 const {
   User,
   Role,
@@ -1848,56 +1848,63 @@ exports.getOwnerEarningsSummary = async (req, res, next) => {
     if (salonIds.length === 0) {
       return res.json({
         data: {
+          pending: 0,
+          in_batch: 0,
           pending_total: 0,
           settled_total: 0,
           collected_at_salon: 0,
-          in_batch: 0,
+          platform_fee_owed: 0,
         },
       });
     }
 
-    const { Op } = require('sequelize');
-    const salonEntryTypes = ['SERVICE_SALON_NET', 'PREMIUM_SALON'];
-    const [pending, inBatch, settled, collectedAtSalon] = await Promise.all([
-      SettlementLedger.sum('amount', {
-        where: {
-          salon_id: { [Op.in]: salonIds },
-          status: 'PENDING',
-          entry_type: { [Op.in]: salonEntryTypes },
-        },
-      }),
-      SettlementLedger.sum('amount', {
-        where: {
-          salon_id: { [Op.in]: salonIds },
-          status: 'IN_BATCH',
-          entry_type: { [Op.in]: salonEntryTypes },
-        },
-      }),
-      SettlementLedger.sum('amount', {
-        where: {
-          salon_id: { [Op.in]: salonIds },
-          status: 'SETTLED',
-          entry_type: { [Op.in]: salonEntryTypes },
-        },
-      }),
-      SettlementLedger.sum('amount', {
-        where: {
-          salon_id: { [Op.in]: salonIds },
-          status: 'COLLECTED',
-          entry_type: { [Op.in]: salonEntryTypes },
-        },
-      }),
-    ]);
+    const schema = process.env.DB_SCHEMA || 'salon_booking_schema';
+    const [row] = await sequelize.query(
+      `
+      SELECT
+        COALESCE(SUM(sl.amount) FILTER (
+          WHERE sl.status = 'PENDING'
+            AND sl.entry_type IN ('SERVICE_SALON_NET', 'PREMIUM_SALON')
+        ), 0) AS pending,
+        COALESCE(SUM(sl.amount) FILTER (
+          WHERE sl.status = 'IN_BATCH'
+            AND sl.entry_type IN ('SERVICE_SALON_NET', 'PREMIUM_SALON')
+        ), 0) AS in_batch,
+        COALESCE(SUM(sl.amount) FILTER (
+          WHERE sl.status = 'SETTLED'
+            AND sl.entry_type IN ('SERVICE_SALON_NET', 'PREMIUM_SALON')
+        ), 0) AS settled,
+        COALESCE(SUM(sl.amount) FILTER (
+          WHERE sl.status = 'COLLECTED'
+            AND sl.entry_type IN ('SERVICE_SALON_NET', 'PREMIUM_SALON')
+        ), 0) AS collected_at_salon,
+        COALESCE(SUM(sl.amount) FILTER (
+          WHERE sl.status = 'PENDING'
+            AND sl.entry_type IN ('SERVICE_COMMISSION', 'PREMIUM_PLATFORM')
+            AND p.method = 'PAY_AT_SHOP'
+        ), 0) AS platform_fee_owed
+      FROM "${schema}"."settlement_ledger" sl
+      LEFT JOIN "${schema}"."payments" p ON p.id = sl.payment_id
+      WHERE sl.salon_id IN (:salonIds)
+      `,
+      {
+        replacements: { salonIds },
+        type: QueryTypes.SELECT,
+      },
+    );
 
-    const pendingNum = Number(pending) || 0;
-    const inBatchNum = Number(inBatch) || 0;
+    const pendingNum = Number(row?.pending) || 0;
+    const inBatchNum = Number(row?.in_batch) || 0;
+    const platformFeeOwed = Number(row?.platform_fee_owed) || 0;
+    const grossPending = pendingNum + inBatchNum;
     res.json({
       data: {
         pending: pendingNum,
         in_batch: inBatchNum,
-        pending_total: pendingNum + inBatchNum,
-        settled_total: Number(settled) || 0,
-        collected_at_salon: Number(collectedAtSalon) || 0,
+        pending_total: Math.max(0, grossPending - platformFeeOwed),
+        settled_total: Number(row?.settled) || 0,
+        collected_at_salon: Number(row?.collected_at_salon) || 0,
+        platform_fee_owed: platformFeeOwed,
       },
     });
   } catch (err) {

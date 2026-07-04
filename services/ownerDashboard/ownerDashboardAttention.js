@@ -29,7 +29,7 @@ async function fetchAttentionCounts(scope) {
           AND EXISTS (
             SELECT 1 FROM "${SCHEMA}"."bookings" b
             WHERE b.booking_group_id = p.booking_group_id
-              AND b.booking_status = 'ACCEPTED'
+              AND b.booking_status IN ('ACCEPTED', 'COMPLETED')
           )
       ) AS cash,
       (SELECT COUNT(DISTINCT COALESCE(booking_group_id, id))::int
@@ -107,7 +107,7 @@ async function fetchCashPreviews(scope, limit) {
       AND EXISTS (
         SELECT 1 FROM "${SCHEMA}"."bookings" b
         WHERE b.booking_group_id = p.booking_group_id
-          AND b.booking_status = 'ACCEPTED'
+          AND b.booking_status IN ('ACCEPTED', 'COMPLETED')
       )
     ORDER BY p.created_at ASC
     LIMIT :limit

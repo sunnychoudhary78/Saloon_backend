@@ -1,4 +1,4 @@
-const { SettlementLedger, PaymentLineItem, sequelize } = require('../models');
+const { SettlementLedger } = require('../models');
 
 async function createFromPayment(payment, transaction = null) {
   const plain = typeof payment.get === 'function' ? payment.get({ plain: true }) : payment;
@@ -10,6 +10,9 @@ async function createFromPayment(payment, transaction = null) {
   });
   if (existing > 0) return [];
 
+  const isDirectCash = plain.method === 'PAY_AT_SHOP';
+  const salonEntryStatus = isDirectCash ? 'COLLECTED' : 'PENDING';
+
   const entries = [];
   const base = {
     payment_id: plain.id,
@@ -17,7 +20,6 @@ async function createFromPayment(payment, transaction = null) {
     salon_id: plain.salon_id,
     settings_version: plain.settings_version,
     currency: plain.currency || 'INR',
-    status: 'PENDING',
   };
 
   if (plain.premium_platform_amount && Number(plain.premium_platform_amount) > 0) {
@@ -28,6 +30,7 @@ async function createFromPayment(payment, transaction = null) {
       entry_type: 'PREMIUM_PLATFORM',
       amount: Number(plain.premium_platform_amount),
       source_split_percent: Number(plain.premium_fee_platform_percent),
+      status: 'PENDING',
     });
   }
 
@@ -39,6 +42,7 @@ async function createFromPayment(payment, transaction = null) {
       entry_type: 'PREMIUM_SALON',
       amount: Number(plain.premium_salon_amount),
       source_split_percent: Number(plain.premium_fee_salon_percent),
+      status: salonEntryStatus,
     });
   }
 
@@ -52,6 +56,7 @@ async function createFromPayment(payment, transaction = null) {
         entry_type: 'SERVICE_COMMISSION',
         amount: Number(linePlain.commission_amount),
         source_commission_percent: Number(linePlain.commission_percent),
+        status: 'PENDING',
       });
     }
     if (Number(linePlain.salon_net_amount) > 0) {
@@ -62,6 +67,7 @@ async function createFromPayment(payment, transaction = null) {
         entry_type: 'SERVICE_SALON_NET',
         amount: Number(linePlain.salon_net_amount),
         source_commission_percent: Number(linePlain.commission_percent),
+        status: salonEntryStatus,
       });
     }
   }

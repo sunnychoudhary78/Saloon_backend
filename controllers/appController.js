@@ -159,11 +159,15 @@ function shapeBookingWithPayments(booking) {
   const plain = typeof booking.get === 'function' ? booking.get({ plain: true }) : booking;
   const payments = (plain.payments || []).map((payment) => shapePayment(payment));
   const latest = splitPayments(payments);
+  const salonFee = latest.salon_fee_payment;
+  const requiresCashConfirmation = salonFee?.method === 'PAY_AT_SHOP'
+    && salonFee?.status === 'PENDING';
   return {
     ...plain,
     payments,
     premium_payment: latest.premium_payment,
     salon_fee_payment: latest.salon_fee_payment,
+    requires_cash_confirmation: requiresCashConfirmation,
   };
 }
 
@@ -1575,6 +1579,7 @@ exports.getOwnerReviews = async (req, res, next) => {
 exports.completeBooking = async (req, res, next) => {
   const t = await sequelize.transaction();
   let committed = false;
+  let cashNotifications = null;
   try {
     const booking = await Booking.findByPk(req.params.id, {
       transaction: t,
@@ -1609,9 +1614,38 @@ exports.completeBooking = async (req, res, next) => {
       item.updated_by = req.user.id;
       await item.save({ transaction: t });
     }
+
+    // Completing a pay-at-salon visit implies cash was received.
+    const groupId = booking.booking_group_id || booking.id;
+    const cashPayment = await Payment.findOne({
+      where: {
+        booking_group_id: groupId,
+        checkout_kind: 'SALON_FEE',
+        method: 'PAY_AT_SHOP',
+        status: 'PENDING',
+      },
+      include: [{ model: PaymentLineItem, as: 'line_items' }],
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
+    if (cashPayment) {
+      const cashResult = await fulfillCashPayment(
+        cashPayment.id,
+        req.user.id,
+        { confirmedAmount: null },
+        t,
+      );
+      if (!cashResult.alreadyPaid) {
+        cashNotifications = cashResult.notifications;
+      }
+    }
+
     await t.commit();
     committed = true;
     notifyBookingCompleted(booking.id);
+    if (cashNotifications) {
+      dispatchPaymentNotifications(cashNotifications);
+    }
     const fullBooking = await Booking.findByPk(booking.id, {
       include: ownerBookingDetailInclude(),
     });
@@ -1778,29 +1812,58 @@ exports.getOwnerEarningsSummary = async (req, res, next) => {
     const salons = await Salon.findAll({ where: { owner_id: owner.id }, attributes: ['id'] });
     const salonIds = salons.map((s) => s.id);
     if (salonIds.length === 0) {
-      return res.json({ data: { pending_total: 0, settled_total: 0 } });
+      return res.json({
+        data: {
+          pending_total: 0,
+          settled_total: 0,
+          collected_at_salon: 0,
+          in_batch: 0,
+        },
+      });
     }
 
     const { Op } = require('sequelize');
-    const pending = await SettlementLedger.sum('amount', {
-      where: {
-        salon_id: { [Op.in]: salonIds },
-        status: 'PENDING',
-        entry_type: { [Op.in]: ['SERVICE_SALON_NET', 'PREMIUM_SALON'] },
-      },
-    });
-    const settled = await SettlementLedger.sum('amount', {
-      where: {
-        salon_id: { [Op.in]: salonIds },
-        status: 'SETTLED',
-        entry_type: { [Op.in]: ['SERVICE_SALON_NET', 'PREMIUM_SALON'] },
-      },
-    });
+    const salonEntryTypes = ['SERVICE_SALON_NET', 'PREMIUM_SALON'];
+    const [pending, inBatch, settled, collectedAtSalon] = await Promise.all([
+      SettlementLedger.sum('amount', {
+        where: {
+          salon_id: { [Op.in]: salonIds },
+          status: 'PENDING',
+          entry_type: { [Op.in]: salonEntryTypes },
+        },
+      }),
+      SettlementLedger.sum('amount', {
+        where: {
+          salon_id: { [Op.in]: salonIds },
+          status: 'IN_BATCH',
+          entry_type: { [Op.in]: salonEntryTypes },
+        },
+      }),
+      SettlementLedger.sum('amount', {
+        where: {
+          salon_id: { [Op.in]: salonIds },
+          status: 'SETTLED',
+          entry_type: { [Op.in]: salonEntryTypes },
+        },
+      }),
+      SettlementLedger.sum('amount', {
+        where: {
+          salon_id: { [Op.in]: salonIds },
+          status: 'COLLECTED',
+          entry_type: { [Op.in]: salonEntryTypes },
+        },
+      }),
+    ]);
 
+    const pendingNum = Number(pending) || 0;
+    const inBatchNum = Number(inBatch) || 0;
     res.json({
       data: {
-        pending_total: Number(pending) || 0,
+        pending: pendingNum,
+        in_batch: inBatchNum,
+        pending_total: pendingNum + inBatchNum,
         settled_total: Number(settled) || 0,
+        collected_at_salon: Number(collectedAtSalon) || 0,
       },
     });
   } catch (err) {

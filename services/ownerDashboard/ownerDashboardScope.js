@@ -1,5 +1,5 @@
 const { Op, fn, col } = require('sequelize');
-const { Salon, Service } = require('../../models');
+const { Salon, Service, SalonApplication } = require('../../models');
 const AppError = require('../../middlewares/AppError');
 const { getSalonOwnerForUser, assertSalonOwnership } = require('../../utils/ownershipGuard');
 const {
@@ -49,18 +49,48 @@ async function resolveOwnerDashboardScope(userId, options = {}) {
 
   let salonsWithServices = salons.map((s) => s.get({ plain: true }));
   if (salonIds.length > 0) {
-    const serviceCounts = await Service.findAll({
-      where: { salon_id: { [Op.in]: salonIds }, status: 'ACTIVE' },
-      attributes: ['salon_id', [fn('COUNT', col('id')), 'active_services']],
-      group: ['salon_id'],
-      raw: true,
-    });
+    const [serviceCounts, pendingUpdates] = await Promise.all([
+      Service.findAll({
+        where: { salon_id: { [Op.in]: salonIds }, status: 'ACTIVE' },
+        attributes: ['salon_id', [fn('COUNT', col('id')), 'active_services']],
+        group: ['salon_id'],
+        raw: true,
+      }),
+      SalonApplication.findAll({
+        where: {
+          owner_id: owner.id,
+          salon_id: { [Op.in]: salonIds },
+          application_type: 'UPDATE',
+          application_status: 'PENDING_APPROVAL',
+        },
+        attributes: [
+          'salon_id',
+          'cover_image',
+          'description',
+          'gallery_images',
+          'phone',
+          'opening_time',
+          'closing_time',
+        ],
+        order: [['created_at', 'DESC']],
+      }),
+    ]);
+
     const countBySalon = new Map(
       serviceCounts.map((row) => [row.salon_id, parseInt(row.active_services, 10) || 0]),
     );
+    const pendingBySalon = new Map();
+    for (const app of pendingUpdates) {
+      const plain = app.get({ plain: true });
+      if (!pendingBySalon.has(plain.salon_id)) {
+        pendingBySalon.set(plain.salon_id, plain);
+      }
+    }
+
     salonsWithServices = salonsWithServices.map((salon) => ({
       ...salon,
       active_services: countBySalon.get(salon.id) || 0,
+      pending_update: pendingBySalon.get(salon.id) || null,
     }));
   }
 

@@ -31,6 +31,7 @@ function emptySummary(periodOpts = null) {
       in_batch: 0,
       pending_total: 0,
       settled: 0,
+      collected_at_salon: 0,
     },
     reputation: { average_rating: null, review_count: 0 },
     premium_bookings_count: 0,
@@ -288,7 +289,13 @@ async function fetchCompletedBookingsInPeriod(scope, periodOpts) {
 
 async function fetchEarnings(scope) {
   if (scope.salonIds.length === 0) {
-    return { pending: 0, in_batch: 0, pending_total: 0, settled: 0 };
+    return {
+      pending: 0,
+      in_batch: 0,
+      pending_total: 0,
+      settled: 0,
+      collected_at_salon: 0,
+    };
   }
 
   const [row] = await sequelize.query(
@@ -296,7 +303,8 @@ async function fetchEarnings(scope) {
     SELECT
       COALESCE(SUM(amount) FILTER (WHERE status = 'PENDING'), 0) AS pending,
       COALESCE(SUM(amount) FILTER (WHERE status = 'IN_BATCH'), 0) AS in_batch,
-      COALESCE(SUM(amount) FILTER (WHERE status = 'SETTLED'), 0) AS settled
+      COALESCE(SUM(amount) FILTER (WHERE status = 'SETTLED'), 0) AS settled,
+      COALESCE(SUM(amount) FILTER (WHERE status = 'COLLECTED'), 0) AS collected_at_salon
     FROM "${SCHEMA}"."settlement_ledger"
     WHERE salon_id IN (:salonIds)
       AND entry_type IN ('SERVICE_SALON_NET', 'PREMIUM_SALON')
@@ -314,6 +322,7 @@ async function fetchEarnings(scope) {
     in_batch: inBatch,
     pending_total: round2(pending + inBatch),
     settled: round2(row?.settled || 0),
+    collected_at_salon: round2(row?.collected_at_salon || 0),
   };
 }
 

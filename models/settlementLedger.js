@@ -29,7 +29,7 @@ module.exports = (sequelize, DataTypes) => {
       source_commission_percent: { type: DataTypes.DECIMAL(5, 2), allowNull: true },
       source_split_percent: { type: DataTypes.DECIMAL(5, 2), allowNull: true },
       status: {
-        type: DataTypes.ENUM('PENDING', 'IN_BATCH', 'SETTLED', 'REVERSED'),
+        type: DataTypes.ENUM('PENDING', 'IN_BATCH', 'SETTLED', 'COLLECTED', 'REVERSED'),
         allowNull: false,
         defaultValue: 'PENDING',
       },

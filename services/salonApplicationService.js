@@ -1,6 +1,10 @@
 const { SalonApplication, Salon, sequelize } = require('../models');
 const { logAudit } = require('./auditService');
 const { ensureApplicationCoordinates } = require('./geocodingService');
+const {
+  notifySalonApplicationApproved,
+  notifySalonApplicationRejected,
+} = require('./salonApplicationNotificationHelper');
 
 function addImageUrl(urls, url) {
   if (typeof url !== 'string' || url.length === 0 || urls.includes(url)) return;
@@ -150,6 +154,8 @@ async function approveApplication(applicationId, reviewerId, req) {
       req,
     });
 
+    notifySalonApplicationApproved(applicationId);
+
     return { application, salon };
   } catch (err) {
     await t.rollback();
@@ -179,6 +185,8 @@ async function rejectApplication(applicationId, reviewerId, rejectionReason, req
     newValues: { rejection_reason: rejectionReason },
     req,
   });
+
+  notifySalonApplicationRejected(applicationId);
 
   return application;
 }

@@ -45,6 +45,8 @@ const {
   notifyBookingRejected,
   notifyBookingCompleted,
 } = require('../services/bookingNotificationHelper');
+const { notifySalonApplicationSubmitted } = require('../services/salonApplicationNotificationHelper');
+const { notifyNewReview } = require('../services/reviewNotificationHelper');
 const {
   attachRatingSummary,
   getBatchSalonRatingSummaries,
@@ -499,6 +501,7 @@ exports.submitSalonApplication = async (req, res, next) => {
     });
 
     await logAudit({ userId: req.user.id, action: 'salonApplication.submit', entityType: 'SalonApplication', entityId: application.id, req });
+    notifySalonApplicationSubmitted(application.id);
     res.status(201).json({ data: application });
   } catch (err) {
     next(err);
@@ -1255,6 +1258,7 @@ exports.createReview = async (req, res, next) => {
       created_by: req.user.id,
       updated_by: req.user.id,
     });
+    notifyNewReview(row.id);
     res.status(201).json({ data: row });
   } catch (err) {
     next(err);

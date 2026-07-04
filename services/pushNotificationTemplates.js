@@ -8,6 +8,10 @@ const NOTIFICATION_TYPES = {
   PROMOTIONAL_OFFER: 'promotional_offer',
   NEW_BOOKING: 'new_booking',
   PAYMENT_RECEIVED: 'payment_received',
+  SALON_APPLICATION_SUBMITTED: 'salon_application_submitted',
+  SALON_APPLICATION_APPROVED: 'salon_application_approved',
+  SALON_APPLICATION_REJECTED: 'salon_application_rejected',
+  NEW_REVIEW: 'new_review',
 };
 
 const SCREENS = {
@@ -15,9 +19,11 @@ const SCREENS = {
   PROMOTIONS: 'promotions',
   OWNER_BOOKING_DETAILS: 'owner_booking_details',
   OWNER_EARNINGS: 'owner_earnings',
+  OWNER_DASHBOARD: 'owner_dashboard',
+  OWNER_REVIEWS: 'owner_reviews',
 };
 
-function buildPayload({ type, title, body, bookingId, screen, userRole }) {
+function buildPayload({ type, title, body, bookingId, applicationId, salonId, screen, userRole }) {
   const data = {
     type,
     screen,
@@ -26,10 +32,34 @@ function buildPayload({ type, title, body, bookingId, screen, userRole }) {
   if (bookingId) {
     data.bookingId = String(bookingId);
   }
+  if (applicationId) {
+    data.applicationId = String(applicationId);
+  }
+  if (salonId) {
+    data.salonId = String(salonId);
+  }
   return {
     notification: { title, body },
     data,
   };
+}
+
+function normalizeApplicationType(type) {
+  if (type === 'CLOSE') return 'DEACTIVATE';
+  return type || 'CREATE';
+}
+
+function applicationLabel(applicationType) {
+  switch (normalizeApplicationType(applicationType)) {
+    case 'UPDATE':
+      return 'salon update';
+    case 'DEACTIVATE':
+      return 'salon deactivation';
+    case 'ACTIVATE':
+      return 'salon activation';
+    default:
+      return 'salon application';
+  }
 }
 
 function bookingConfirmed(booking, salonName) {
@@ -141,6 +171,77 @@ function paymentReceived(booking, customerName, amount) {
   });
 }
 
+function salonApplicationSubmitted(application) {
+  const name = application.salon_name || 'your salon';
+  const label = applicationLabel(application.application_type);
+  return buildPayload({
+    type: NOTIFICATION_TYPES.SALON_APPLICATION_SUBMITTED,
+    title: 'Application Submitted',
+    body: `Your ${label} for ${name} is pending admin approval.`,
+    applicationId: application.id,
+    salonId: application.salon_id,
+    screen: SCREENS.OWNER_DASHBOARD,
+    userRole: 'salon_owner',
+  });
+}
+
+function salonApplicationApproved(application) {
+  const name = application.salon_name || 'your salon';
+  const type = normalizeApplicationType(application.application_type);
+  let title = 'Salon Approved';
+  let body = `Your salon '${name}' has been approved. You can start accepting bookings.`;
+
+  if (type === 'UPDATE') {
+    title = 'Salon Update Approved';
+    body = `Your changes to '${name}' have been approved.`;
+  } else if (type === 'DEACTIVATE') {
+    title = 'Salon Deactivated';
+    body = `Your salon '${name}' has been deactivated.`;
+  } else if (type === 'ACTIVATE') {
+    title = 'Salon Activated';
+    body = `Your salon '${name}' has been reactivated.`;
+  }
+
+  return buildPayload({
+    type: NOTIFICATION_TYPES.SALON_APPLICATION_APPROVED,
+    title,
+    body,
+    applicationId: application.id,
+    salonId: application.salon_id,
+    screen: SCREENS.OWNER_DASHBOARD,
+    userRole: 'salon_owner',
+  });
+}
+
+function salonApplicationRejected(application) {
+  const name = application.salon_name || 'your salon';
+  const label = applicationLabel(application.application_type);
+  const reason = application.rejection_reason
+    ? ` Reason: ${application.rejection_reason}`
+    : '';
+  return buildPayload({
+    type: NOTIFICATION_TYPES.SALON_APPLICATION_REJECTED,
+    title: 'Application Rejected',
+    body: `Your ${label} for ${name} was not approved.${reason}`,
+    applicationId: application.id,
+    salonId: application.salon_id,
+    screen: SCREENS.OWNER_DASHBOARD,
+    userRole: 'salon_owner',
+  });
+}
+
+function newReview(review, customerName, salonName) {
+  const rating = review.rating != null ? review.rating : '';
+  return buildPayload({
+    type: NOTIFICATION_TYPES.NEW_REVIEW,
+    title: 'New Review',
+    body: `${customerName} left a ${rating}-star review for ${salonName}.`,
+    salonId: review.salon_id,
+    screen: SCREENS.OWNER_REVIEWS,
+    userRole: 'salon_owner',
+  });
+}
+
 module.exports = {
   NOTIFICATION_TYPES,
   SCREENS,
@@ -154,4 +255,8 @@ module.exports = {
   promotionalOffer,
   newBooking,
   paymentReceived,
+  salonApplicationSubmitted,
+  salonApplicationApproved,
+  salonApplicationRejected,
+  newReview,
 };

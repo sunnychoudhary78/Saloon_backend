@@ -37,14 +37,17 @@ const salonApplicationRegistry = [
     path: "application_type",
     type: "string",
   },
+  { key: "formatted_address", label: "Full Address", path: "formatted_address", type: "string" },
   { key: "city", label: "City", path: "city", type: "string" },
   { key: "state", label: "State", path: "state", type: "string" },
+  { key: "postal_code", label: "Postal Code", path: "postal_code", type: "string" },
   {
     key: "application_status",
     label: "Status",
     path: "application_status",
     type: "string",
   },
+
   {
     key: "owner_name",
     label: "Owner",
@@ -62,8 +65,10 @@ const salonRegistry = [
     type: "string",
   },
   { key: "phone", label: "Phone", path: "phone", type: "string" },
+  { key: "formatted_address", label: "Full Address", path: "formatted_address", type: "string" },
   { key: "city", label: "City", path: "city", type: "string" },
   { key: "state", label: "State", path: "state", type: "string" },
+  { key: "postal_code", label: "Postal Code", path: "postal_code", type: "string" },
   { key: "status", label: "Status", path: "status", type: "string" },
   {
     key: "is_featured",
@@ -71,6 +76,7 @@ const salonRegistry = [
     path: "is_featured",
     type: "boolean",
   },
+
   {
     key: "owner_name",
     label: "Owner",

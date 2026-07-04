@@ -84,7 +84,31 @@ exports.update = async (req, res, next) => {
     const row = await Salon.findByPk(req.params.id);
     if (!row) throw new AppError('Salon not found', 404);
 
-    const fields = ['salon_name', 'description', 'address', 'city', 'state', 'latitude', 'longitude', 'cover_image', 'gallery_images', 'phone', 'opening_time', 'closing_time', 'status', 'is_featured', 'featured_sort_order', 'premium_booking_fee'];
+    const fields = [
+      'salon_name',
+      'description',
+      'address',
+      'formatted_address',
+      'locality',
+      'city',
+      'state',
+      'postal_code',
+      'latitude',
+      'longitude',
+      'cover_image',
+      'gallery_images',
+      'phone',
+      'opening_time',
+      'closing_time',
+      'status',
+      'is_featured',
+      'featured_sort_order',
+      'premium_booking_fee',
+    ];
+    if (req.body.street !== undefined && req.body.address === undefined) {
+      row.address = req.body.street;
+    }
+
     for (const f of fields) {
       if (req.body[f] !== undefined) row[f] = req.body[f];
     }

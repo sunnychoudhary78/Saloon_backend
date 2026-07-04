@@ -284,11 +284,32 @@ function snapshotSalonForApplication(salon, payload) {
     ...payload,
     salon_name: salon.salon_name,
     address: salon.address,
+    formatted_address: salon.formatted_address ?? null,
+    locality: salon.locality ?? null,
     city: salon.city,
     state: salon.state,
+    postal_code: salon.postal_code ?? null,
+    latitude: salon.latitude,
+    longitude: salon.longitude,
     description: payload.description || null,
   };
 }
+
+function shapeSalonLocationFields(salon) {
+  const address = salon.address || '';
+  return {
+    address,
+    street: address,
+    formatted_address: salon.formatted_address || null,
+    locality: salon.locality || null,
+    city: salon.city || null,
+    state: salon.state || null,
+    postal_code: salon.postal_code || null,
+    latitude: salon.latitude != null ? Number(salon.latitude) : null,
+    longitude: salon.longitude != null ? Number(salon.longitude) : null,
+  };
+}
+
 
 async function assignRole(userId, roleName, assignedBy = null, transaction = null) {
   const role = await Role.findOne({ where: { name: roleName }, transaction });
@@ -735,6 +756,7 @@ exports.getSalon = async (req, res, next) => {
     data.cover_image = shapeCoverForDetail(data.cover_image, data.gallery_images);
     data.gallery_images = shapeGalleryForDetail(data.gallery_images);
     data = shapeDiscountSummary(data);
+    data.street = data.address || '';
     delete data.phone;
     res.json({ data });
   } catch (err) {
@@ -1258,8 +1280,19 @@ exports.searchPlaces = async (req, res, next) => {
       return res.json({ data: [] });
     }
 
-    const limit = Math.min(parseInt(req.query.limit, 10) || 5, 10);
-    const data = await searchPlaces(q, { limit });
+    const limit = Math.min(parseInt(req.query.limit, 10) || 8, 10);
+    const lat = req.query.lat != null ? parseFloat(req.query.lat) : undefined;
+    const lng = req.query.lng != null ? parseFloat(req.query.lng) : undefined;
+    const radius = req.query.radius != null ? parseFloat(req.query.radius) : undefined;
+    const sessiontoken = String(req.query.sessiontoken || '').trim() || undefined;
+
+    const data = await searchPlaces(q, {
+      limit,
+      lat: Number.isFinite(lat) ? lat : undefined,
+      lng: Number.isFinite(lng) ? lng : undefined,
+      radius: Number.isFinite(radius) ? radius : undefined,
+      sessiontoken,
+    });
     res.json({ data });
   } catch (err) {
     next(err);
@@ -1271,7 +1304,8 @@ exports.getPlaceDetails = async (req, res, next) => {
     const placeId = String(req.query.place_id || '').trim();
     if (!placeId) throw new AppError('place_id is required', 400);
 
-    const data = await getPlaceDetails(placeId);
+    const sessiontoken = String(req.query.sessiontoken || '').trim() || undefined;
+    const data = await getPlaceDetails(placeId, { sessiontoken });
     if (!data) throw new AppError('Place not found', 404);
 
     res.json({ data });
@@ -1279,6 +1313,7 @@ exports.getPlaceDetails = async (req, res, next) => {
     next(err);
   }
 };
+
 
 exports.reverseGeocodePlace = async (req, res, next) => {
   try {
@@ -1330,7 +1365,13 @@ exports.getOwnerSalons = async (req, res, next) => {
     const owner = await getSalonOwnerForUser(req.user.id);
     if (!owner) throw new AppError('Salon owner profile not found', 404);
     const salons = await Salon.findAll({ where: { owner_id: owner.id }, order: [['salon_name', 'ASC']] });
-    res.json({ data: salons });
+    res.json({
+      data: salons.map((salon) => {
+        const json = salon.toJSON();
+        json.street = json.address || '';
+        return json;
+      }),
+    });
   } catch (err) {
     next(err);
   }

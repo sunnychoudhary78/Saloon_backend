@@ -8,6 +8,8 @@ const GOOGLE_PLACE_DETAILS_URL =
   'https://maps.googleapis.com/maps/api/place/details/json';
 const GOOGLE_GEOCODE_URL = 'https://maps.googleapis.com/maps/api/geocode/json';
 
+const DEFAULT_BIAS_RADIUS_METERS = 50000;
+
 const GEOCODE_RESULT_TYPE_PRIORITY = [
   'street_address',
   'premise',
@@ -22,8 +24,17 @@ const GEOCODE_RESULT_TYPE_PRIORITY = [
   'locality',
 ];
 
+let missingKeyWarned = false;
+
 function getGoogleMapsApiKey() {
-  return process.env.GOOGLE_MAPS_API_KEY?.trim() || '';
+  const key = process.env.GOOGLE_MAPS_API_KEY?.trim() || '';
+  if (!key && process.env.NODE_ENV === 'production' && !missingKeyWarned) {
+    missingKeyWarned = true;
+    console.error(
+      '[geocoding] GOOGLE_MAPS_API_KEY is not set in production; falling back to Nominatim',
+    );
+  }
+  return key;
 }
 
 function buildAddressQuery({ address, city, state }) {
@@ -52,6 +63,16 @@ function pickStreetFromAddress(address = {}) {
   return parts.join(', ').trim();
 }
 
+function withStreetAlias(mapped) {
+  if (!mapped) return null;
+  const street = mapped.address || '';
+  return {
+    ...mapped,
+    address: street,
+    street,
+  };
+}
+
 function mapNominatimHit(hit) {
   const address = hit.address || {};
   const latitude = parseFloat(hit.lat);
@@ -61,19 +82,22 @@ function mapNominatimHit(hit) {
   const street = pickStreetFromAddress(address);
   const city = pickCityFromAddress(address);
   const state = address.state || '';
+  const formattedAddress = (hit.display_name || '').trim();
 
-  return {
+  return withStreetAlias({
     place_id: String(hit.place_id),
-    label: hit.display_name,
-    formatted_address: hit.display_name,
-    address: street || hit.display_name?.split(',')[0]?.trim() || '',
-    locality: address.city || address.town || address.village || '',
+    label: formattedAddress,
+    main_text: street || formattedAddress.split(',')[0]?.trim() || '',
+    secondary_text: [city, state].filter(Boolean).join(', '),
+    formatted_address: formattedAddress,
+    address: street || formattedAddress.split(',')[0]?.trim() || '',
+    locality: address.city || address.town || address.village || address.suburb || '',
     postal_code: address.postcode || '',
     city,
     state,
     latitude,
     longitude,
-  };
+  });
 }
 
 function componentValue(components, type) {
@@ -86,6 +110,10 @@ function parseGoogleAddressComponents(components = []) {
   const route = componentValue(components, 'route');
   const premise = componentValue(components, 'premise');
   const subpremise = componentValue(components, 'subpremise');
+  const sublocality =
+    componentValue(components, 'sublocality')
+    || componentValue(components, 'sublocality_level_1')
+    || componentValue(components, 'neighborhood');
   const locality = componentValue(components, 'locality');
   const city =
     locality
@@ -97,7 +125,13 @@ function parseGoogleAddressComponents(components = []) {
   const streetParts = [streetNumber, route, premise, subpremise].filter(Boolean);
   const address = streetParts.join(', ').trim();
 
-  return { address, locality, city, state, postalCode };
+  return {
+    address,
+    locality: sublocality || locality,
+    city,
+    state,
+    postalCode,
+  };
 }
 
 function geocodeResultScore(result) {
@@ -148,7 +182,10 @@ function logReverseGeocodeDiagnostics(lat, lng, data, selectedResult, mapped) {
 
   if (mapped) {
     console.log('mapped to Flutter:');
+    console.log('  formatted_address:', mapped.formatted_address);
     console.log('  address:', mapped.address);
+    console.log('  street:', mapped.street);
+    console.log('  locality:', mapped.locality);
     console.log('  city:', mapped.city);
     console.log('  state:', mapped.state);
     console.log('  postal_code:', mapped.postal_code);
@@ -166,22 +203,44 @@ function mapGooglePlaceResult(result) {
     result.address_components || [],
   );
   const formattedAddress = (result.formatted_address || result.name || '').trim();
+  const street = address || formattedAddress.split(',')[0]?.trim() || '';
 
-  return {
+  return withStreetAlias({
     place_id: String(result.place_id || ''),
     label: formattedAddress,
+    main_text: street,
+    secondary_text: [locality, city, state, postalCode].filter(Boolean).join(', '),
     formatted_address: formattedAddress,
-    address: address || formattedAddress.split(',')[0]?.trim() || '',
+    address: street,
     locality,
     postal_code: postalCode,
     city,
     state,
     latitude,
     longitude,
+  });
+}
+
+function parseBiasOptions(options = {}) {
+  const lat = options.lat != null ? Number(options.lat) : NaN;
+  const lng = options.lng != null ? Number(options.lng) : NaN;
+  const radius = options.radius != null
+    ? Number(options.radius)
+    : DEFAULT_BIAS_RADIUS_METERS;
+  const sessiontoken = String(options.sessiontoken || '').trim();
+
+  return {
+    hasBias: Number.isFinite(lat) && Number.isFinite(lng),
+    lat,
+    lng,
+    radius: Number.isFinite(radius) && radius > 0
+      ? Math.min(Math.max(Math.round(radius), 1000), 50000)
+      : DEFAULT_BIAS_RADIUS_METERS,
+    sessiontoken,
   };
 }
 
-async function searchPlacesNominatim(query, { limit = 5, countryCode = 'in' } = {}) {
+async function searchPlacesNominatim(query, { limit = 8, countryCode = 'in' } = {}) {
   const q = String(query || '').trim();
   if (q.length < 3) return [];
 
@@ -191,7 +250,7 @@ async function searchPlacesNominatim(query, { limit = 5, countryCode = 'in' } = 
         q,
         format: 'json',
         addressdetails: 1,
-        limit: Math.min(Math.max(parseInt(limit, 10) || 5, 1), 10),
+        limit: Math.min(Math.max(parseInt(limit, 10) || 8, 1), 10),
         countrycodes: countryCode,
       },
       headers: {
@@ -207,21 +266,33 @@ async function searchPlacesNominatim(query, { limit = 5, countryCode = 'in' } = 
   }
 }
 
-async function searchPlacesGoogle(query, { limit = 5 } = {}) {
+async function searchPlacesGoogle(query, options = {}) {
   const apiKey = getGoogleMapsApiKey();
   if (!apiKey) return null;
 
   const q = String(query || '').trim();
   if (q.length < 3) return [];
 
+  const bias = parseBiasOptions(options);
+
   try {
+    const params = {
+      input: q,
+      key: apiKey,
+      components: 'country:in',
+      language: 'en',
+    };
+
+    if (bias.sessiontoken) {
+      params.sessiontoken = bias.sessiontoken;
+    }
+    if (bias.hasBias) {
+      params.location = `${bias.lat},${bias.lng}`;
+      params.radius = bias.radius;
+    }
+
     const { data } = await axios.get(GOOGLE_PLACES_AUTOCOMPLETE_URL, {
-      params: {
-        input: q,
-        key: apiKey,
-        components: 'country:in',
-        language: 'en',
-      },
+      params,
       timeout: 10000,
     });
 
@@ -230,17 +301,30 @@ async function searchPlacesGoogle(query, { limit = 5 } = {}) {
     }
 
     const predictions = Array.isArray(data.predictions) ? data.predictions : [];
-    const max = Math.min(Math.max(parseInt(limit, 10) || 5, 1), 10);
+    const max = Math.min(Math.max(parseInt(options.limit, 10) || 8, 1), 10);
 
-    return predictions.slice(0, max).map((prediction) => ({
-      place_id: String(prediction.place_id || ''),
-      label: prediction.description || '',
-      address: '',
-      city: '',
-      state: '',
-      latitude: 0,
-      longitude: 0,
-    })).filter((item) => item.place_id && item.label);
+    return predictions.slice(0, max).map((prediction) => {
+      const structured = prediction.structured_formatting || {};
+      const mainText = (structured.main_text || '').trim();
+      const secondaryText = (structured.secondary_text || '').trim();
+      const label = (prediction.description || '').trim();
+
+      return {
+        place_id: String(prediction.place_id || ''),
+        label,
+        main_text: mainText || label,
+        secondary_text: secondaryText,
+        formatted_address: '',
+        address: '',
+        street: '',
+        locality: '',
+        postal_code: '',
+        city: '',
+        state: '',
+        latitude: 0,
+        longitude: 0,
+      };
+    }).filter((item) => item.place_id && item.label);
   } catch {
     return null;
   }
@@ -252,21 +336,28 @@ async function searchPlaces(query, options = {}) {
   return searchPlacesNominatim(query, options);
 }
 
-async function getPlaceDetails(placeId) {
+async function getPlaceDetails(placeId, options = {}) {
   const id = String(placeId || '').trim();
   if (!id) return null;
 
   const apiKey = getGoogleMapsApiKey();
   if (!apiKey) return null;
 
+  const sessiontoken = String(options.sessiontoken || '').trim();
+
   try {
+    const params = {
+      place_id: id,
+      key: apiKey,
+      fields: 'place_id,formatted_address,geometry,address_components,name',
+      language: 'en',
+    };
+    if (sessiontoken) {
+      params.sessiontoken = sessiontoken;
+    }
+
     const { data } = await axios.get(GOOGLE_PLACE_DETAILS_URL, {
-      params: {
-        place_id: id,
-        key: apiKey,
-        fields: 'place_id,formatted_address,geometry,address_components,name',
-        language: 'en',
-      },
+      params,
       timeout: 10000,
     });
 
@@ -299,7 +390,15 @@ async function reverseGeocodeCoordinates(latitude, longitude) {
         const mapped = mapGooglePlaceResult({
           ...best,
           place_id: best.place_id || `geo:${lat},${lng}`,
+          geometry: best.geometry || {
+            location: { lat, lng },
+          },
         });
+        // Preserve the pin coordinates the user selected.
+        if (mapped) {
+          mapped.latitude = lat;
+          mapped.longitude = lng;
+        }
         logReverseGeocodeDiagnostics(lat, lng, data, best, mapped);
         if (mapped) return mapped;
       }
@@ -323,7 +422,12 @@ async function reverseGeocodeCoordinates(latitude, longitude) {
     });
 
     if (!Array.isArray(data) || data.length === 0) return null;
-    return mapNominatimHit(data[0]);
+    const mapped = mapNominatimHit(data[0]);
+    if (mapped) {
+      mapped.latitude = lat;
+      mapped.longitude = lng;
+    }
+    return mapped;
   } catch {
     return null;
   }

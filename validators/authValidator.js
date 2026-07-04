@@ -49,11 +49,11 @@ const salonApplicationSchema = Joi.object({
     otherwise: Joi.string().required(),
   }),
   description: Joi.string().allow(null, '').optional(),
-  address: Joi.when('application_type', {
-    is: statusChangeTypes,
-    then: Joi.string().allow(null, '').optional(),
-    otherwise: Joi.string().required(),
-  }),
+  address: Joi.string().allow(null, '').optional(),
+  street: Joi.string().allow(null, '').optional(),
+  formatted_address: Joi.string().allow(null, '').optional(),
+  locality: Joi.string().allow(null, '').optional(),
+  postal_code: Joi.string().allow(null, '').max(16).optional(),
   city: Joi.when('application_type', {
     is: statusChangeTypes,
     then: Joi.string().allow(null, '').optional(),
@@ -74,6 +74,7 @@ const salonApplicationSchema = Joi.object({
     then: Joi.number().optional(),
     otherwise: Joi.number().min(-180).max(180).required(),
   }),
+
   cover_image: Joi.string().allow(null, '').optional(),
   gallery_images: Joi.array().items(Joi.string().uri()).optional(),
   phone: Joi.when('application_type', {
@@ -96,13 +97,38 @@ const salonApplicationSchema = Joi.object({
   premium_booking_fee: Joi.number().min(1).max(10000).allow(null).optional(),
 }).custom((value, helpers) => {
   const type = value.application_type || 'CREATE';
-  if (statusChangeTypes.validate(type).error) return value;
+  const isStatusChange = !statusChangeTypes.validate(type).error;
+
+  if (!isStatusChange) {
+    const street = String(value.street || value.address || '').trim();
+    if (!street) {
+      return helpers.message('address is required');
+    }
+    value.address = street;
+  } else if (value.street || value.address) {
+    value.address = String(value.street || value.address || '').trim();
+  }
+
+  delete value.street;
+
+  if (value.formatted_address != null) {
+    value.formatted_address = String(value.formatted_address).trim() || null;
+  }
+  if (value.locality != null) {
+    value.locality = String(value.locality).trim() || null;
+  }
+  if (value.postal_code != null) {
+    value.postal_code = String(value.postal_code).trim() || null;
+  }
+
+  if (isStatusChange) return value;
   if (!value.opening_time || !value.closing_time) return value;
   if (parseTimeToMinutes(value.closing_time) <= parseTimeToMinutes(value.opening_time)) {
     return helpers.message('closing_time must be after opening_time');
   }
   return value;
 });
+
 
 function validate(schema) {
   return (req, res, next) => {

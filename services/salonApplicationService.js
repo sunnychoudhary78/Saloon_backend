@@ -33,8 +33,11 @@ const salonFieldsFromApplication = (application, coordsOverride = null, existing
   salon_name: application.salon_name,
   description: application.description,
   address: application.address,
+  formatted_address: application.formatted_address ?? existingSalon?.formatted_address ?? null,
+  locality: application.locality ?? existingSalon?.locality ?? null,
   city: application.city,
   state: application.state,
+  postal_code: application.postal_code ?? existingSalon?.postal_code ?? null,
   latitude: coordsOverride?.latitude ?? application.latitude,
   longitude: coordsOverride?.longitude ?? application.longitude,
   ...imageFieldsFromApplication(application, existingSalon),
@@ -45,6 +48,7 @@ const salonFieldsFromApplication = (application, coordsOverride = null, existing
     ? application.premium_booking_fee
     : (existingSalon?.premium_booking_fee ?? null),
 });
+
 
 function normalizeApplicationType(type) {
   if (type === 'CLOSE') return 'DEACTIVATE';

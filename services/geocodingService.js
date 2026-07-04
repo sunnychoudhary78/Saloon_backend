@@ -4,11 +4,16 @@ const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
 const USER_AGENT = 'salon-booking-app/1.0';
 const GOOGLE_PLACES_AUTOCOMPLETE_URL =
   'https://maps.googleapis.com/maps/api/place/autocomplete/json';
+const GOOGLE_PLACES_TEXT_SEARCH_URL =
+  'https://maps.googleapis.com/maps/api/place/textsearch/json';
 const GOOGLE_PLACE_DETAILS_URL =
   'https://maps.googleapis.com/maps/api/place/details/json';
 const GOOGLE_GEOCODE_URL = 'https://maps.googleapis.com/maps/api/geocode/json';
 
 const DEFAULT_BIAS_RADIUS_METERS = 50000;
+/** Geographic center of India — treat as "no real bias" if client still sends it. */
+const INDIA_DEFAULT_LAT = 20.5937;
+const INDIA_DEFAULT_LNG = 78.9629;
 
 const GEOCODE_RESULT_TYPE_PRIORITY = [
   'street_address',
@@ -221,6 +226,13 @@ function mapGooglePlaceResult(result) {
   });
 }
 
+function isIndiaDefaultBias(lat, lng) {
+  return (
+    Math.abs(lat - INDIA_DEFAULT_LAT) < 0.001
+    && Math.abs(lng - INDIA_DEFAULT_LNG) < 0.001
+  );
+}
+
 function parseBiasOptions(options = {}) {
   const lat = options.lat != null ? Number(options.lat) : NaN;
   const lng = options.lng != null ? Number(options.lng) : NaN;
@@ -228,15 +240,74 @@ function parseBiasOptions(options = {}) {
     ? Number(options.radius)
     : DEFAULT_BIAS_RADIUS_METERS;
   const sessiontoken = String(options.sessiontoken || '').trim();
+  const hasCoords = Number.isFinite(lat) && Number.isFinite(lng);
+  // Ignore India-centroid bias so Autocomplete is not skewed to central India.
+  const hasBias = hasCoords && !isIndiaDefaultBias(lat, lng);
 
   return {
-    hasBias: Number.isFinite(lat) && Number.isFinite(lng),
+    hasBias,
     lat,
     lng,
     radius: Number.isFinite(radius) && radius > 0
       ? Math.min(Math.max(Math.round(radius), 1000), 50000)
       : DEFAULT_BIAS_RADIUS_METERS,
     sessiontoken,
+  };
+}
+
+function shouldLogGeocoding() {
+  return process.env.GEOCODING_DEBUG === '1' || process.env.NODE_ENV !== 'production';
+}
+
+function logPlacesSearch(label, payload) {
+  if (!shouldLogGeocoding()) return;
+  console.log(`[places-search] ${label}`, payload);
+}
+
+function mapAutocompletePrediction(prediction) {
+  const structured = prediction.structured_formatting || {};
+  const mainText = (structured.main_text || '').trim();
+  const secondaryText = (structured.secondary_text || '').trim();
+  const label = (prediction.description || '').trim();
+
+  return {
+    place_id: String(prediction.place_id || ''),
+    label,
+    main_text: mainText || label,
+    secondary_text: secondaryText,
+    formatted_address: '',
+    address: '',
+    street: '',
+    locality: '',
+    postal_code: '',
+    city: '',
+    state: '',
+    latitude: 0,
+    longitude: 0,
+  };
+}
+
+function mapTextSearchResult(result) {
+  const name = (result.name || '').trim();
+  const formatted = (result.formatted_address || result.vicinity || '').trim();
+  const label = [name, formatted].filter(Boolean).join(', ') || formatted || name;
+  const latitude = parseFloat(result.geometry?.location?.lat);
+  const longitude = parseFloat(result.geometry?.location?.lng);
+
+  return {
+    place_id: String(result.place_id || ''),
+    label,
+    main_text: name || label,
+    secondary_text: formatted,
+    formatted_address: formatted,
+    address: name || formatted.split(',')[0]?.trim() || '',
+    street: name || formatted.split(',')[0]?.trim() || '',
+    locality: '',
+    postal_code: '',
+    city: '',
+    state: '',
+    latitude: Number.isFinite(latitude) ? latitude : 0,
+    longitude: Number.isFinite(longitude) ? longitude : 0,
   };
 }
 
@@ -266,14 +337,15 @@ async function searchPlacesNominatim(query, { limit = 8, countryCode = 'in' } = 
   }
 }
 
-async function searchPlacesGoogle(query, options = {}) {
+async function searchPlacesAutocomplete(query, options = {}) {
   const apiKey = getGoogleMapsApiKey();
-  if (!apiKey) return null;
+  if (!apiKey) return { ok: false, results: null, status: 'NO_KEY' };
 
   const q = String(query || '').trim();
-  if (q.length < 3) return [];
+  if (q.length < 3) return { ok: true, results: [], status: 'SHORT_QUERY' };
 
   const bias = parseBiasOptions(options);
+  const max = Math.min(Math.max(parseInt(options.limit, 10) || 8, 1), 10);
 
   try {
     const params = {
@@ -289,6 +361,7 @@ async function searchPlacesGoogle(query, options = {}) {
     if (bias.hasBias) {
       params.location = `${bias.lat},${bias.lng}`;
       params.radius = bias.radius;
+      params.origin = `${bias.lat},${bias.lng}`;
     }
 
     const { data } = await axios.get(GOOGLE_PLACES_AUTOCOMPLETE_URL, {
@@ -296,44 +369,102 @@ async function searchPlacesGoogle(query, options = {}) {
       timeout: 10000,
     });
 
+    logPlacesSearch('autocomplete', {
+      query: q,
+      status: data.status,
+      error_message: data.error_message || null,
+      count: Array.isArray(data.predictions) ? data.predictions.length : 0,
+      bias: bias.hasBias ? { lat: bias.lat, lng: bias.lng, radius: bias.radius } : null,
+    });
+
     if (data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
-      return null;
+      return { ok: false, results: null, status: data.status };
     }
 
     const predictions = Array.isArray(data.predictions) ? data.predictions : [];
-    const max = Math.min(Math.max(parseInt(options.limit, 10) || 8, 1), 10);
+    const results = predictions
+      .slice(0, max)
+      .map(mapAutocompletePrediction)
+      .filter((item) => item.place_id && item.label);
 
-    return predictions.slice(0, max).map((prediction) => {
-      const structured = prediction.structured_formatting || {};
-      const mainText = (structured.main_text || '').trim();
-      const secondaryText = (structured.secondary_text || '').trim();
-      const label = (prediction.description || '').trim();
-
-      return {
-        place_id: String(prediction.place_id || ''),
-        label,
-        main_text: mainText || label,
-        secondary_text: secondaryText,
-        formatted_address: '',
-        address: '',
-        street: '',
-        locality: '',
-        postal_code: '',
-        city: '',
-        state: '',
-        latitude: 0,
-        longitude: 0,
-      };
-    }).filter((item) => item.place_id && item.label);
-  } catch {
-    return null;
+    return { ok: true, results, status: data.status };
+  } catch (err) {
+    logPlacesSearch('autocomplete-error', { query: q, message: err.message });
+    return { ok: false, results: null, status: 'NETWORK_ERROR' };
   }
 }
 
+async function searchPlacesTextSearch(query, options = {}) {
+  const apiKey = getGoogleMapsApiKey();
+  if (!apiKey) return [];
+
+  const q = String(query || '').trim();
+  if (q.length < 3) return [];
+
+  const bias = parseBiasOptions(options);
+  const max = Math.min(Math.max(parseInt(options.limit, 10) || 8, 1), 10);
+
+  try {
+    const params = {
+      query: q,
+      key: apiKey,
+      language: 'en',
+      region: 'in',
+    };
+
+    if (bias.hasBias) {
+      params.location = `${bias.lat},${bias.lng}`;
+      params.radius = bias.radius;
+    }
+
+    const { data } = await axios.get(GOOGLE_PLACES_TEXT_SEARCH_URL, {
+      params,
+      timeout: 10000,
+    });
+
+    logPlacesSearch('textsearch', {
+      query: q,
+      status: data.status,
+      error_message: data.error_message || null,
+      count: Array.isArray(data.results) ? data.results.length : 0,
+      bias: bias.hasBias ? { lat: bias.lat, lng: bias.lng, radius: bias.radius } : null,
+    });
+
+    if (data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
+      return [];
+    }
+
+    const hits = Array.isArray(data.results) ? data.results : [];
+    return hits
+      .slice(0, max)
+      .map(mapTextSearchResult)
+      .filter((item) => item.place_id && item.label);
+  } catch (err) {
+    logPlacesSearch('textsearch-error', { query: q, message: err.message });
+    return [];
+  }
+}
+
+/**
+ * Prefer Autocomplete; fall back to Text Search for brand/salon names.
+ * Nominatim only when no Google API key is configured.
+ */
 async function searchPlaces(query, options = {}) {
-  const googleResults = await searchPlacesGoogle(query, options);
-  if (googleResults !== null) return googleResults;
-  return searchPlacesNominatim(query, options);
+  const apiKey = getGoogleMapsApiKey();
+  if (!apiKey) {
+    return searchPlacesNominatim(query, options);
+  }
+
+  const autocomplete = await searchPlacesAutocomplete(query, options);
+  if (autocomplete.ok && autocomplete.results.length > 0) {
+    return autocomplete.results;
+  }
+
+  // ZERO_RESULTS, empty list, or Autocomplete hard-failure → Text Search.
+  const textResults = await searchPlacesTextSearch(query, options);
+  if (textResults.length > 0) return textResults;
+
+  return [];
 }
 
 async function getPlaceDetails(placeId, options = {}) {

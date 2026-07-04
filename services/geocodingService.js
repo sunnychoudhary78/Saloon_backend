@@ -8,6 +8,11 @@ const GOOGLE_PLACES_TEXT_SEARCH_URL =
   'https://maps.googleapis.com/maps/api/place/textsearch/json';
 const GOOGLE_PLACE_DETAILS_URL =
   'https://maps.googleapis.com/maps/api/place/details/json';
+const GOOGLE_PLACES_NEW_AUTOCOMPLETE_URL =
+  'https://places.googleapis.com/v1/places:autocomplete';
+const GOOGLE_PLACES_NEW_TEXT_SEARCH_URL =
+  'https://places.googleapis.com/v1/places:searchText';
+const GOOGLE_PLACES_NEW_DETAILS_URL = 'https://places.googleapis.com/v1/places';
 const GOOGLE_GEOCODE_URL = 'https://maps.googleapis.com/maps/api/geocode/json';
 
 const DEFAULT_BIAS_RADIUS_METERS = 50000;
@@ -259,9 +264,29 @@ function shouldLogGeocoding() {
   return process.env.GEOCODING_DEBUG === '1' || process.env.NODE_ENV !== 'production';
 }
 
-function logPlacesSearch(label, payload) {
-  if (!shouldLogGeocoding()) return;
+/** Always log Places failures; success only when debug/non-prod. */
+function logPlacesSearch(label, payload, { force = false } = {}) {
+  const isFailure = force
+    || payload?.ok === false
+    || (payload?.status && payload.status !== 'OK' && payload.status !== 'ZERO_RESULTS' && payload.status !== 'SUCCESS')
+    || (typeof payload?.count === 'number' && payload.count === 0 && payload?.status && payload.status !== 'OK' && payload.status !== 'SUCCESS');
+
+  if (!shouldLogGeocoding() && !isFailure && !force) return;
   console.log(`[places-search] ${label}`, payload);
+}
+
+function emptySuggestionFields() {
+  return {
+    formatted_address: '',
+    address: '',
+    street: '',
+    locality: '',
+    postal_code: '',
+    city: '',
+    state: '',
+    latitude: 0,
+    longitude: 0,
+  };
 }
 
 function mapAutocompletePrediction(prediction) {
@@ -275,15 +300,7 @@ function mapAutocompletePrediction(prediction) {
     label,
     main_text: mainText || label,
     secondary_text: secondaryText,
-    formatted_address: '',
-    address: '',
-    street: '',
-    locality: '',
-    postal_code: '',
-    city: '',
-    state: '',
-    latitude: 0,
-    longitude: 0,
+    ...emptySuggestionFields(),
   };
 }
 
@@ -311,6 +328,125 @@ function mapTextSearchResult(result) {
   };
 }
 
+function mapPlacesNewPrediction(prediction) {
+  const placeId = String(prediction.placeId || '').trim();
+  const label = (prediction.text?.text || '').trim();
+  const mainText = (prediction.structuredFormat?.mainText?.text || '').trim();
+  const secondaryText = (prediction.structuredFormat?.secondaryText?.text || '').trim();
+
+  return {
+    place_id: placeId,
+    label: label || mainText,
+    main_text: mainText || label,
+    secondary_text: secondaryText,
+    ...emptySuggestionFields(),
+  };
+}
+
+function mapPlacesNewTextResult(place) {
+  const idRaw = String(place.id || place.name || '').trim();
+  const placeId = idRaw.startsWith('places/') ? idRaw.slice('places/'.length) : idRaw;
+  const name = (place.displayName?.text || '').trim();
+  const formatted = (place.formattedAddress || '').trim();
+  const label = [name, formatted].filter(Boolean).join(', ') || formatted || name;
+  const latitude = parseFloat(place.location?.latitude);
+  const longitude = parseFloat(place.location?.longitude);
+
+  return {
+    place_id: placeId,
+    label,
+    main_text: name || label,
+    secondary_text: formatted,
+    formatted_address: formatted,
+    address: name || formatted.split(',')[0]?.trim() || '',
+    street: name || formatted.split(',')[0]?.trim() || '',
+    locality: '',
+    postal_code: '',
+    city: '',
+    state: '',
+    latitude: Number.isFinite(latitude) ? latitude : 0,
+    longitude: Number.isFinite(longitude) ? longitude : 0,
+  };
+}
+
+function componentValueNew(components, type) {
+  const match = (components || []).find((c) => c.types?.includes(type));
+  return match?.longText?.trim() || match?.long_name?.trim() || '';
+}
+
+function parsePlacesNewAddressComponents(components = []) {
+  const streetNumber = componentValueNew(components, 'street_number');
+  const route = componentValueNew(components, 'route');
+  const premise = componentValueNew(components, 'premise');
+  const subpremise = componentValueNew(components, 'subpremise');
+  const sublocality =
+    componentValueNew(components, 'sublocality')
+    || componentValueNew(components, 'sublocality_level_1')
+    || componentValueNew(components, 'neighborhood');
+  const locality = componentValueNew(components, 'locality');
+  const city =
+    locality
+    || componentValueNew(components, 'administrative_area_level_2')
+    || componentValueNew(components, 'administrative_area_level_3');
+  const state = componentValueNew(components, 'administrative_area_level_1');
+  const postalCode = componentValueNew(components, 'postal_code');
+  const streetParts = [streetNumber, route, premise, subpremise].filter(Boolean);
+  const address = streetParts.join(', ').trim();
+
+  return {
+    address,
+    locality: sublocality || locality,
+    city,
+    state,
+    postalCode,
+  };
+}
+
+function mapPlacesNewDetails(place) {
+  if (!place) return null;
+
+  const idRaw = String(place.id || place.name || '').trim();
+  const placeId = idRaw.startsWith('places/') ? idRaw.slice('places/'.length) : idRaw;
+  const latitude = parseFloat(place.location?.latitude);
+  const longitude = parseFloat(place.location?.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+
+  const { address, locality, city, state, postalCode } = parsePlacesNewAddressComponents(
+    place.addressComponents || [],
+  );
+  const name = (place.displayName?.text || '').trim();
+  const formattedAddress = (place.formattedAddress || name || '').trim();
+  const street = address || formattedAddress.split(',')[0]?.trim() || '';
+
+  return withStreetAlias({
+    place_id: placeId,
+    label: formattedAddress,
+    main_text: street,
+    secondary_text: [locality, city, state, postalCode].filter(Boolean).join(', '),
+    formatted_address: formattedAddress,
+    address: street,
+    locality,
+    postal_code: postalCode,
+    city,
+    state,
+    latitude,
+    longitude,
+  });
+}
+
+function buildLocationBiasCircle(bias) {
+  if (!bias?.hasBias) return undefined;
+  return {
+    circle: {
+      center: {
+        latitude: bias.lat,
+        longitude: bias.lng,
+      },
+      radius: bias.radius,
+    },
+  };
+}
+
 async function searchPlacesNominatim(query, { limit = 8, countryCode = 'in' } = {}) {
   const q = String(query || '').trim();
   if (q.length < 3) return [];
@@ -331,15 +467,155 @@ async function searchPlacesNominatim(query, { limit = 8, countryCode = 'in' } = 
     });
 
     if (!Array.isArray(data)) return [];
-    return data.map(mapNominatimHit).filter(Boolean);
-  } catch {
+    const results = data.map(mapNominatimHit).filter(Boolean);
+    logPlacesSearch('nominatim', { query: q, count: results.length, status: 'SUCCESS' });
+    return results;
+  } catch (err) {
+    logPlacesSearch('nominatim-error', { query: q, message: err.message }, { force: true });
     return [];
   }
 }
 
-async function searchPlacesAutocomplete(query, options = {}) {
+async function searchPlacesNewAutocomplete(query, options = {}) {
   const apiKey = getGoogleMapsApiKey();
-  if (!apiKey) return { ok: false, results: null, status: 'NO_KEY' };
+  if (!apiKey) return { ok: false, results: [], status: 'NO_KEY' };
+
+  const q = String(query || '').trim();
+  if (q.length < 3) return { ok: true, results: [], status: 'SHORT_QUERY' };
+
+  const bias = parseBiasOptions(options);
+  const max = Math.min(Math.max(parseInt(options.limit, 10) || 8, 1), 10);
+  const body = {
+    input: q,
+    includedRegionCodes: ['in'],
+    languageCode: 'en',
+  };
+
+  if (bias.sessiontoken) {
+    body.sessionToken = bias.sessiontoken;
+  }
+  const locationBias = buildLocationBiasCircle(bias);
+  if (locationBias) {
+    body.locationBias = locationBias;
+  }
+
+  try {
+    const { data, status } = await axios.post(GOOGLE_PLACES_NEW_AUTOCOMPLETE_URL, body, {
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': apiKey,
+      },
+      timeout: 10000,
+      validateStatus: () => true,
+    });
+
+    if (status < 200 || status >= 300) {
+      logPlacesSearch('places-new-autocomplete', {
+        query: q,
+        ok: false,
+        status: data?.error?.status || status,
+        error_message: data?.error?.message || null,
+        count: 0,
+      }, { force: true });
+      return { ok: false, results: [], status: String(data?.error?.status || status) };
+    }
+
+    const suggestions = Array.isArray(data?.suggestions) ? data.suggestions : [];
+    const results = suggestions
+      .map((s) => s.placePrediction)
+      .filter(Boolean)
+      .slice(0, max)
+      .map(mapPlacesNewPrediction)
+      .filter((item) => item.place_id && item.label);
+
+    logPlacesSearch('places-new-autocomplete', {
+      query: q,
+      ok: true,
+      status: 'SUCCESS',
+      count: results.length,
+      bias: bias.hasBias ? { lat: bias.lat, lng: bias.lng, radius: bias.radius } : null,
+    }, { force: results.length === 0 });
+
+    return { ok: true, results, status: 'SUCCESS' };
+  } catch (err) {
+    logPlacesSearch('places-new-autocomplete-error', {
+      query: q,
+      ok: false,
+      message: err.message,
+    }, { force: true });
+    return { ok: false, results: [], status: 'NETWORK_ERROR' };
+  }
+}
+
+async function searchPlacesNewTextSearch(query, options = {}) {
+  const apiKey = getGoogleMapsApiKey();
+  if (!apiKey) return [];
+
+  const q = String(query || '').trim();
+  if (q.length < 3) return [];
+
+  const bias = parseBiasOptions(options);
+  const max = Math.min(Math.max(parseInt(options.limit, 10) || 8, 1), 10);
+  const body = {
+    textQuery: q,
+    languageCode: 'en',
+    regionCode: 'IN',
+  };
+  const locationBias = buildLocationBiasCircle(bias);
+  if (locationBias) {
+    body.locationBias = locationBias;
+  }
+
+  try {
+    const { data, status } = await axios.post(GOOGLE_PLACES_NEW_TEXT_SEARCH_URL, body, {
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': apiKey,
+        'X-Goog-FieldMask':
+          'places.id,places.displayName,places.formattedAddress,places.location',
+      },
+      timeout: 10000,
+      validateStatus: () => true,
+    });
+
+    if (status < 200 || status >= 300) {
+      logPlacesSearch('places-new-textsearch', {
+        query: q,
+        ok: false,
+        status: data?.error?.status || status,
+        error_message: data?.error?.message || null,
+        count: 0,
+      }, { force: true });
+      return [];
+    }
+
+    const places = Array.isArray(data?.places) ? data.places : [];
+    const results = places
+      .slice(0, max)
+      .map(mapPlacesNewTextResult)
+      .filter((item) => item.place_id && item.label);
+
+    logPlacesSearch('places-new-textsearch', {
+      query: q,
+      ok: true,
+      status: 'SUCCESS',
+      count: results.length,
+    }, { force: results.length === 0 });
+
+    return results;
+  } catch (err) {
+    logPlacesSearch('places-new-textsearch-error', {
+      query: q,
+      ok: false,
+      message: err.message,
+    }, { force: true });
+    return [];
+  }
+}
+
+async function searchPlacesLegacyAutocomplete(query, options = {}) {
+  const apiKey = getGoogleMapsApiKey();
+  if (!apiKey) return { ok: false, results: [], status: 'NO_KEY' };
 
   const q = String(query || '').trim();
   if (q.length < 3) return { ok: true, results: [], status: 'SHORT_QUERY' };
@@ -369,16 +645,17 @@ async function searchPlacesAutocomplete(query, options = {}) {
       timeout: 10000,
     });
 
-    logPlacesSearch('autocomplete', {
+    const count = Array.isArray(data.predictions) ? data.predictions.length : 0;
+    logPlacesSearch('legacy-autocomplete', {
       query: q,
       status: data.status,
       error_message: data.error_message || null,
-      count: Array.isArray(data.predictions) ? data.predictions.length : 0,
-      bias: bias.hasBias ? { lat: bias.lat, lng: bias.lng, radius: bias.radius } : null,
-    });
+      count,
+      ok: data.status === 'OK' || data.status === 'ZERO_RESULTS',
+    }, { force: data.status !== 'OK' && data.status !== 'ZERO_RESULTS' });
 
     if (data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
-      return { ok: false, results: null, status: data.status };
+      return { ok: false, results: [], status: data.status };
     }
 
     const predictions = Array.isArray(data.predictions) ? data.predictions : [];
@@ -389,12 +666,16 @@ async function searchPlacesAutocomplete(query, options = {}) {
 
     return { ok: true, results, status: data.status };
   } catch (err) {
-    logPlacesSearch('autocomplete-error', { query: q, message: err.message });
-    return { ok: false, results: null, status: 'NETWORK_ERROR' };
+    logPlacesSearch('legacy-autocomplete-error', {
+      query: q,
+      ok: false,
+      message: err.message,
+    }, { force: true });
+    return { ok: false, results: [], status: 'NETWORK_ERROR' };
   }
 }
 
-async function searchPlacesTextSearch(query, options = {}) {
+async function searchPlacesLegacyTextSearch(query, options = {}) {
   const apiKey = getGoogleMapsApiKey();
   if (!apiKey) return [];
 
@@ -422,13 +703,13 @@ async function searchPlacesTextSearch(query, options = {}) {
       timeout: 10000,
     });
 
-    logPlacesSearch('textsearch', {
+    logPlacesSearch('legacy-textsearch', {
       query: q,
       status: data.status,
       error_message: data.error_message || null,
       count: Array.isArray(data.results) ? data.results.length : 0,
-      bias: bias.hasBias ? { lat: bias.lat, lng: bias.lng, radius: bias.radius } : null,
-    });
+      ok: data.status === 'OK' || data.status === 'ZERO_RESULTS',
+    }, { force: data.status !== 'OK' && data.status !== 'ZERO_RESULTS' });
 
     if (data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
       return [];
@@ -440,34 +721,86 @@ async function searchPlacesTextSearch(query, options = {}) {
       .map(mapTextSearchResult)
       .filter((item) => item.place_id && item.label);
   } catch (err) {
-    logPlacesSearch('textsearch-error', { query: q, message: err.message });
+    logPlacesSearch('legacy-textsearch-error', {
+      query: q,
+      ok: false,
+      message: err.message,
+    }, { force: true });
     return [];
   }
 }
 
 /**
- * Prefer Autocomplete; fall back to Text Search for brand/salon names.
- * Nominatim only when no Google API key is configured.
+ * New Autocomplete → New TextText → Legacy Autocomplete → Legacy Text Search → Nominatim.
  */
 async function searchPlaces(query, options = {}) {
+  const q = String(query || '').trim();
+  if (q.length < 3) return [];
+
   const apiKey = getGoogleMapsApiKey();
   if (!apiKey) {
     return searchPlacesNominatim(query, options);
   }
 
-  const autocomplete = await searchPlacesAutocomplete(query, options);
-  if (autocomplete.ok && autocomplete.results.length > 0) {
-    return autocomplete.results;
-  }
+  const newAutocomplete = await searchPlacesNewAutocomplete(query, options);
+  if (newAutocomplete.results.length > 0) return newAutocomplete.results;
 
-  // ZERO_RESULTS, empty list, or Autocomplete hard-failure → Text Search.
-  const textResults = await searchPlacesTextSearch(query, options);
-  if (textResults.length > 0) return textResults;
+  const newText = await searchPlacesNewTextSearch(query, options);
+  if (newText.length > 0) return newText;
 
-  return [];
+  const legacyAutocomplete = await searchPlacesLegacyAutocomplete(query, options);
+  if (legacyAutocomplete.results.length > 0) return legacyAutocomplete.results;
+
+  const legacyText = await searchPlacesLegacyTextSearch(query, options);
+  if (legacyText.length > 0) return legacyText;
+
+  logPlacesSearch('fallback-nominatim', { query: q }, { force: true });
+  return searchPlacesNominatim(query, options);
 }
 
-async function getPlaceDetails(placeId, options = {}) {
+async function getPlaceDetailsNew(placeId, options = {}) {
+  const apiKey = getGoogleMapsApiKey();
+  if (!apiKey) return null;
+
+  const id = String(placeId || '').trim().replace(/^places\//, '');
+  if (!id) return null;
+
+  try {
+    const { data, status } = await axios.get(
+      `${GOOGLE_PLACES_NEW_DETAILS_URL}/${encodeURIComponent(id)}`,
+      {
+        headers: {
+          'X-Goog-Api-Key': apiKey,
+          'X-Goog-FieldMask':
+            'id,formattedAddress,location,addressComponents,displayName',
+        },
+        timeout: 10000,
+        validateStatus: () => true,
+      },
+    );
+
+    if (status < 200 || status >= 300) {
+      logPlacesSearch('places-new-details', {
+        place_id: id,
+        ok: false,
+        status: data?.error?.status || status,
+        error_message: data?.error?.message || null,
+      }, { force: true });
+      return null;
+    }
+
+    return mapPlacesNewDetails(data);
+  } catch (err) {
+    logPlacesSearch('places-new-details-error', {
+      place_id: id,
+      ok: false,
+      message: err.message,
+    }, { force: true });
+    return null;
+  }
+}
+
+async function getPlaceDetailsLegacy(placeId, options = {}) {
   const id = String(placeId || '').trim();
   if (!id) return null;
 
@@ -492,11 +825,37 @@ async function getPlaceDetails(placeId, options = {}) {
       timeout: 10000,
     });
 
-    if (data.status !== 'OK' || !data.result) return null;
+    if (data.status !== 'OK' || !data.result) {
+      logPlacesSearch('legacy-details', {
+        place_id: id,
+        ok: false,
+        status: data.status,
+        error_message: data.error_message || null,
+      }, { force: true });
+      return null;
+    }
     return mapGooglePlaceResult(data.result);
-  } catch {
+  } catch (err) {
+    logPlacesSearch('legacy-details-error', {
+      place_id: id,
+      ok: false,
+      message: err.message,
+    }, { force: true });
     return null;
   }
+}
+
+async function getPlaceDetails(placeId, options = {}) {
+  const id = String(placeId || '').trim();
+  if (!id) return null;
+
+  const apiKey = getGoogleMapsApiKey();
+  if (!apiKey) return null;
+
+  const fromNew = await getPlaceDetailsNew(id, options);
+  if (fromNew) return fromNew;
+
+  return getPlaceDetailsLegacy(id, options);
 }
 
 async function reverseGeocodeCoordinates(latitude, longitude) {

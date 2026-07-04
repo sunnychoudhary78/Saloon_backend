@@ -1616,13 +1616,13 @@ exports.completeBooking = async (req, res, next) => {
     }
 
     const groupId = booking.booking_group_id || booking.id;
+    // Lock Payment only — include + FOR UPDATE fails on PG outer joins.
     const salonFeePayment = await Payment.findOne({
       where: {
         booking_group_id: groupId,
         checkout_kind: 'SALON_FEE',
         status: { [Op.in]: ['PENDING', 'PAID'] },
       },
-      include: [{ model: PaymentLineItem, as: 'line_items' }],
       transaction: t,
       lock: t.LOCK.UPDATE,
       order: [['created_at', 'DESC']],
@@ -1807,6 +1807,8 @@ exports.confirmBookingGroupCash = async (req, res, next) => {
 
     await assertSalonOwnership(req.user.id, groupBookings[0].salon_id);
 
+    // Lock Payment only — include + FOR UPDATE fails on PG outer joins.
+    // fulfillCashPayment reloads payment with line_items safely.
     const payment = await Payment.findOne({
       where: {
         booking_group_id: groupId,
@@ -1814,7 +1816,6 @@ exports.confirmBookingGroupCash = async (req, res, next) => {
         method: 'PAY_AT_SHOP',
         status: 'PENDING',
       },
-      include: [{ model: PaymentLineItem, as: 'line_items' }],
       transaction: t,
       lock: t.LOCK.UPDATE,
     });

@@ -1,9 +1,8 @@
 'use strict';
 
 /**
- * Adds COLLECTED to settlement_ledger status enum.
- * Runs outside the migration transaction because PostgreSQL rejects
- * ALTER TYPE ... ADD VALUE inside a transaction on older versions.
+ * Idempotent follow-up: ensures COLLECTED exists even if the previous
+ * migration was recorded without applying the enum value.
  */
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
@@ -11,7 +10,6 @@ module.exports = {
     const schema = process.env.DB_SCHEMA || 'salon_booking_schema';
     const sequelize = queryInterface.sequelize;
 
-    // End the transaction sequelize-cli may have opened for this migration.
     try {
       await sequelize.query('COMMIT');
     } catch (_) {
@@ -38,7 +36,6 @@ module.exports = {
   },
 
   async down(queryInterface) {
-    // PostgreSQL cannot remove enum values safely; leave COLLECTED in place.
     void queryInterface;
   },
 };

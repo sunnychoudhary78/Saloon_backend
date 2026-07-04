@@ -155,19 +155,36 @@ function ownerBookingDetailInclude() {
   ];
 }
 
+function resolveSalonFeePaymentState(salonFee) {
+  if (!salonFee) return 'none';
+  if (salonFee.status === 'PAID') return 'paid';
+  if (salonFee.status === 'PENDING' && salonFee.method === 'PAY_AT_SHOP') {
+    return 'pending_cash';
+  }
+  if (salonFee.status === 'PENDING' && salonFee.method === 'RAZORPAY') {
+    return 'pending_online';
+  }
+  if (salonFee.status === 'PENDING') return 'pending_online';
+  return 'none';
+}
+
 function shapeBookingWithPayments(booking) {
   const plain = typeof booking.get === 'function' ? booking.get({ plain: true }) : booking;
   const payments = (plain.payments || []).map((payment) => shapePayment(payment));
   const latest = splitPayments(payments);
   const salonFee = latest.salon_fee_payment;
-  const requiresCashConfirmation = salonFee?.method === 'PAY_AT_SHOP'
-    && salonFee?.status === 'PENDING';
+  const salonFeePaymentState = resolveSalonFeePaymentState(salonFee);
+  const requiresCashConfirmation = salonFeePaymentState === 'pending_cash';
+  const canComplete = salonFeePaymentState === 'pending_cash'
+    || salonFeePaymentState === 'paid';
   return {
     ...plain,
     payments,
     premium_payment: latest.premium_payment,
     salon_fee_payment: latest.salon_fee_payment,
+    salon_fee_payment_state: salonFeePaymentState,
     requires_cash_confirmation: requiresCashConfirmation,
+    can_complete: canComplete,
   };
 }
 
@@ -1598,6 +1615,30 @@ exports.completeBooking = async (req, res, next) => {
       throw new AppError('Premium booking must be paid before completion', 400);
     }
 
+    const groupId = booking.booking_group_id || booking.id;
+    const salonFeePayment = await Payment.findOne({
+      where: {
+        booking_group_id: groupId,
+        checkout_kind: 'SALON_FEE',
+        status: { [Op.in]: ['PENDING', 'PAID'] },
+      },
+      include: [{ model: PaymentLineItem, as: 'line_items' }],
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+      order: [['created_at', 'DESC']],
+    });
+    const feeState = resolveSalonFeePaymentState(
+      salonFeePayment ? shapePayment(salonFeePayment) : null,
+    );
+    if (feeState !== 'pending_cash' && feeState !== 'paid') {
+      throw new AppError(
+        feeState === 'pending_online'
+          ? 'Online payment must be completed before finishing this booking'
+          : 'Customer payment is required before completing this booking',
+        400,
+      );
+    }
+
     // Complete every accepted service in the same request. A still-unpaid
     // premium service is left as-is rather than failing the whole group.
     const group = await loadBookingGroupForUpdate(booking, t);
@@ -1616,21 +1657,13 @@ exports.completeBooking = async (req, res, next) => {
     }
 
     // Completing a pay-at-salon visit implies cash was received.
-    const groupId = booking.booking_group_id || booking.id;
-    const cashPayment = await Payment.findOne({
-      where: {
-        booking_group_id: groupId,
-        checkout_kind: 'SALON_FEE',
-        method: 'PAY_AT_SHOP',
-        status: 'PENDING',
-      },
-      include: [{ model: PaymentLineItem, as: 'line_items' }],
-      transaction: t,
-      lock: t.LOCK.UPDATE,
-    });
-    if (cashPayment) {
+    if (
+      salonFeePayment
+      && salonFeePayment.method === 'PAY_AT_SHOP'
+      && salonFeePayment.status === 'PENDING'
+    ) {
       const cashResult = await fulfillCashPayment(
-        cashPayment.id,
+        salonFeePayment.id,
         req.user.id,
         { confirmedAmount: null },
         t,

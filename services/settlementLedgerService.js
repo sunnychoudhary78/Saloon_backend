@@ -1,4 +1,5 @@
 const { SettlementLedger } = require('../models');
+const AppError = require('../middlewares/AppError');
 
 async function createFromPayment(payment, transaction = null) {
   const plain = typeof payment.get === 'function' ? payment.get({ plain: true }) : payment;
@@ -12,13 +13,17 @@ async function createFromPayment(payment, transaction = null) {
 
   const isDirectCash = plain.method === 'PAY_AT_SHOP';
   const salonEntryStatus = isDirectCash ? 'COLLECTED' : 'PENDING';
+  const bookingGroupId = plain.booking_group_id || plain.booking_id;
+  if (!bookingGroupId) {
+    throw new AppError('Payment is missing booking group for settlement ledger', 500);
+  }
 
   const entries = [];
   const base = {
     payment_id: plain.id,
-    booking_group_id: plain.booking_group_id,
+    booking_group_id: bookingGroupId,
     salon_id: plain.salon_id,
-    settings_version: plain.settings_version,
+    settings_version: plain.settings_version != null ? Number(plain.settings_version) : 1,
     currency: plain.currency || 'INR',
   };
 
@@ -74,7 +79,16 @@ async function createFromPayment(payment, transaction = null) {
 
   if (entries.length === 0) return [];
 
-  return SettlementLedger.bulkCreate(entries, { transaction });
+  try {
+    return await SettlementLedger.bulkCreate(entries, { transaction });
+  } catch (err) {
+    const detail = err?.message || 'unknown error';
+    console.error('[settlement] createFromPayment failed:', detail);
+    throw new AppError(
+      `Failed to record earnings for payment: ${detail}`,
+      500,
+    );
+  }
 }
 
 async function queryLedger({ salonId, status, page = 1, limit = 20 }) {

@@ -106,7 +106,7 @@ async function fetchBookingAggregates(scope) {
              booking_date, booking_time,
              COALESCE(booking_group_id, id) AS visit_key
       FROM "${SCHEMA}"."bookings"
-      WHERE salon_id = ANY(:salonIds)
+      WHERE salon_id IN (:salonIds)
     ),
     visit_status AS (
       SELECT visit_key,
@@ -181,7 +181,7 @@ async function fetchTodayRevenue(scope) {
     `
     SELECT COALESCE(SUM(amount), 0) AS today_gross
     FROM "${SCHEMA}"."payments"
-    WHERE salon_id = ANY(:salonIds)
+    WHERE salon_id IN (:salonIds)
       AND status = 'PAID'
       AND paid_at >= :dayStart
       AND paid_at <= :dayEnd
@@ -207,7 +207,7 @@ async function fetchPeriodRevenue(scope, periodOpts) {
       `
       SELECT COALESCE(SUM(amount), 0) AS period_gross
       FROM "${SCHEMA}"."payments"
-      WHERE salon_id = ANY(:salonIds)
+      WHERE salon_id IN (:salonIds)
         AND status = 'PAID'
         AND (paid_at AT TIME ZONE :tz)::date <= :toDate
       `,
@@ -228,7 +228,7 @@ async function fetchPeriodRevenue(scope, periodOpts) {
     `
     SELECT COALESCE(SUM(amount), 0) AS period_gross
     FROM "${SCHEMA}"."payments"
-    WHERE salon_id = ANY(:salonIds)
+    WHERE salon_id IN (:salonIds)
       AND status = 'PAID'
       AND paid_at >= :periodStart
       AND paid_at <= :periodEnd
@@ -269,7 +269,7 @@ async function fetchCompletedBookingsInPeriod(scope, periodOpts) {
                ELSE 0
              END) AS is_completed
       FROM "${SCHEMA}"."bookings"
-      WHERE salon_id = ANY(:salonIds)
+      WHERE salon_id IN (:salonIds)
         ${dateFilter}
       GROUP BY 1
     )
@@ -298,7 +298,7 @@ async function fetchEarnings(scope) {
       COALESCE(SUM(amount) FILTER (WHERE status = 'IN_BATCH'), 0) AS in_batch,
       COALESCE(SUM(amount) FILTER (WHERE status = 'SETTLED'), 0) AS settled
     FROM "${SCHEMA}"."settlement_ledger"
-    WHERE salon_id = ANY(:salonIds)
+    WHERE salon_id IN (:salonIds)
       AND entry_type IN ('SERVICE_SALON_NET', 'PREMIUM_SALON')
     `,
     {
@@ -327,7 +327,7 @@ async function fetchReputation(scope) {
     SELECT COUNT(*)::int AS review_count,
            ROUND(AVG(rating)::numeric, 1) AS average_rating
     FROM "${SCHEMA}"."reviews"
-    WHERE salon_id = ANY(:salonIds)
+    WHERE salon_id IN (:salonIds)
       AND status = 'PUBLISHED'
     `,
     {

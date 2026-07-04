@@ -92,7 +92,7 @@ async function fetchBookingTrend(scope, fromDate, toDate) {
       SELECT COALESCE(booking_group_id, id) AS visit_key,
              booking_date
       FROM "${SCHEMA}"."bookings"
-      WHERE salon_id = ANY(:salonIds)
+      WHERE salon_id IN (:salonIds)
         AND booking_date BETWEEN :fromDate AND :toDate
         AND booking_status NOT IN ('REJECTED', 'CANCELLED')
       GROUP BY 1, 2
@@ -122,7 +122,7 @@ async function fetchMonthlyBookingTrend(scope, fromDate, toDate) {
       SELECT COALESCE(booking_group_id, id) AS visit_key,
              booking_date
       FROM "${SCHEMA}"."bookings"
-      WHERE salon_id = ANY(:salonIds)
+      WHERE salon_id IN (:salonIds)
         AND booking_date BETWEEN :fromDate AND :toDate
         AND booking_status NOT IN ('REJECTED', 'CANCELLED')
       GROUP BY 1, 2
@@ -152,7 +152,7 @@ async function fetchRevenueTrend(scope, fromDate, toDate) {
     SELECT (paid_at AT TIME ZONE :tz)::date AS date,
            COALESCE(SUM(amount), 0) AS amount
     FROM "${SCHEMA}"."payments"
-    WHERE salon_id = ANY(:salonIds)
+    WHERE salon_id IN (:salonIds)
       AND status = 'PAID'
       AND (paid_at AT TIME ZONE :tz)::date BETWEEN :fromDate AND :toDate
     GROUP BY 1
@@ -178,7 +178,7 @@ async function fetchMonthlyRevenueTrend(scope, fromDate, toDate) {
     SELECT to_char((paid_at AT TIME ZONE :tz)::date, 'YYYY-MM') AS month,
            COALESCE(SUM(amount), 0) AS amount
     FROM "${SCHEMA}"."payments"
-    WHERE salon_id = ANY(:salonIds)
+    WHERE salon_id IN (:salonIds)
       AND status = 'PAID'
       AND (paid_at AT TIME ZONE :tz)::date BETWEEN :fromDate AND :toDate
     GROUP BY 1
@@ -209,7 +209,7 @@ async function fetchTopServices(scope, fromDate, toDate) {
     JOIN "${SCHEMA}"."services" s ON s.id = b.service_id
     LEFT JOIN "${SCHEMA}"."payment_line_items" pli ON pli.booking_id = b.id
     LEFT JOIN "${SCHEMA}"."payments" p ON p.id = pli.payment_id AND p.status = 'PAID'
-    WHERE b.salon_id = ANY(:salonIds)
+    WHERE b.salon_id IN (:salonIds)
       AND b.booking_date BETWEEN :fromDate AND :toDate
       AND b.booking_status NOT IN ('REJECTED', 'CANCELLED')
     GROUP BY b.service_id
@@ -246,14 +246,14 @@ async function fetchCustomerMix(scope, fromDate, toDate) {
       SELECT customer_id,
              MIN(booking_date) AS first_date
       FROM "${SCHEMA}"."bookings"
-      WHERE salon_id = ANY(:salonIds)
+      WHERE salon_id IN (:salonIds)
         AND booking_status NOT IN ('REJECTED', 'CANCELLED')
       GROUP BY customer_id
     ),
     active_in_period AS (
       SELECT DISTINCT customer_id
       FROM "${SCHEMA}"."bookings"
-      WHERE salon_id = ANY(:salonIds)
+      WHERE salon_id IN (:salonIds)
         AND booking_date >= :fromDate
         AND booking_date <= :toDate
         AND booking_status NOT IN ('REJECTED', 'CANCELLED')

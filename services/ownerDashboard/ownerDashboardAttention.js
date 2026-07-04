@@ -18,11 +18,11 @@ async function fetchAttentionCounts(scope) {
     SELECT
       (SELECT COUNT(DISTINCT COALESCE(booking_group_id, id))::int
         FROM "${SCHEMA}"."bookings"
-        WHERE salon_id = ANY(:salonIds) AND booking_status = 'PENDING'
+        WHERE salon_id IN (:salonIds) AND booking_status = 'PENDING'
       ) AS pending,
       (SELECT COUNT(DISTINCT p.id)::int
         FROM "${SCHEMA}"."payments" p
-        WHERE p.salon_id = ANY(:salonIds)
+        WHERE p.salon_id IN (:salonIds)
           AND p.method = 'PAY_AT_SHOP'
           AND p.status = 'PENDING'
           AND p.checkout_kind = 'SALON_FEE'
@@ -34,7 +34,7 @@ async function fetchAttentionCounts(scope) {
       ) AS cash,
       (SELECT COUNT(DISTINCT COALESCE(booking_group_id, id))::int
         FROM "${SCHEMA}"."bookings"
-        WHERE salon_id = ANY(:salonIds)
+        WHERE salon_id IN (:salonIds)
           AND booking_type = 'PREMIUM'
           AND premium_payment_status IN ('PENDING', 'FAILED')
           AND booking_status = 'ACCEPTED'
@@ -74,7 +74,7 @@ async function fetchPendingPreviews(scope, limit) {
     JOIN "${SCHEMA}"."customers" c ON c.id = b.customer_id
     JOIN "${SCHEMA}"."users" u ON u.id = c.user_id
     JOIN "${SCHEMA}"."salons" sal ON sal.id = b.salon_id
-    WHERE b.salon_id = ANY(:salonIds)
+    WHERE b.salon_id IN (:salonIds)
       AND b.booking_status = 'PENDING'
     ORDER BY COALESCE(b.booking_group_id, b.id), b.created_at ASC
     LIMIT :limit
@@ -100,7 +100,7 @@ async function fetchCashPreviews(scope, limit) {
     JOIN "${SCHEMA}"."customers" c ON c.id = p.customer_id
     JOIN "${SCHEMA}"."users" u ON u.id = c.user_id
     JOIN "${SCHEMA}"."salons" sal ON sal.id = p.salon_id
-    WHERE p.salon_id = ANY(:salonIds)
+    WHERE p.salon_id IN (:salonIds)
       AND p.method = 'PAY_AT_SHOP'
       AND p.status = 'PENDING'
       AND p.checkout_kind = 'SALON_FEE'
@@ -138,7 +138,7 @@ async function fetchPremiumUnpaidPreviews(scope, limit) {
     JOIN "${SCHEMA}"."customers" c ON c.id = b.customer_id
     JOIN "${SCHEMA}"."users" u ON u.id = c.user_id
     JOIN "${SCHEMA}"."salons" sal ON sal.id = b.salon_id
-    WHERE b.salon_id = ANY(:salonIds)
+    WHERE b.salon_id IN (:salonIds)
       AND b.booking_type = 'PREMIUM'
       AND b.premium_payment_status IN ('PENDING', 'FAILED')
       AND b.booking_status = 'ACCEPTED'

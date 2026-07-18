@@ -15,6 +15,7 @@ module.exports = (sequelize, DataTypes) => {
       customer_id: { type: DataTypes.UUID, allowNull: false },
       salon_id: { type: DataTypes.UUID, allowNull: false },
       service_id: { type: DataTypes.UUID, allowNull: false },
+      staff_id: { type: DataTypes.UUID, allowNull: true },
       booking_date: { type: DataTypes.DATEONLY, allowNull: false },
       booking_time: { type: DataTypes.TIME, allowNull: false },
       notes: { type: DataTypes.TEXT, allowNull: true },
@@ -50,6 +51,7 @@ module.exports = (sequelize, DataTypes) => {
     Booking.belongsTo(models.Customer, { foreignKey: 'customer_id', as: 'customer' });
     Booking.belongsTo(models.Salon, { foreignKey: 'salon_id', as: 'salon' });
     Booking.belongsTo(models.Service, { foreignKey: 'service_id', as: 'service' });
+    Booking.belongsTo(models.SalonStaff, { foreignKey: 'staff_id', as: 'staff' });
     Booking.belongsTo(models.User, { foreignKey: 'responded_by', as: 'responder' });
     Booking.hasOne(models.Review, { foreignKey: 'booking_id', as: 'review' });
     Booking.hasMany(models.Payment, { foreignKey: 'booking_id', as: 'payments' });

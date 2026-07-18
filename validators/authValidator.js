@@ -13,7 +13,28 @@ const bookingSchema = Joi.object({
   booking_time: Joi.string().required(),
   notes: Joi.string().allow(null, '').optional(),
   is_premium: Joi.boolean().optional(),
+  staff_id: Joi.string().uuid().allow(null).optional(),
 }).or('service_id', 'service_ids');
+
+const staffSchema = Joi.object({
+  name: Joi.string().trim().min(1).max(120).required(),
+  profile_image: Joi.string().allow(null, '').optional(),
+  status: Joi.valid('ACTIVE', 'INACTIVE').optional(),
+  sort_order: Joi.number().integer().min(0).optional(),
+});
+
+const staffUpdateSchema = Joi.object({
+  name: Joi.string().trim().min(1).max(120).optional(),
+  profile_image: Joi.string().allow(null, '').optional(),
+  status: Joi.valid('ACTIVE', 'INACTIVE').optional(),
+  sort_order: Joi.number().integer().min(0).optional(),
+}).min(1);
+
+const reviewSchema = Joi.object({
+  booking_id: Joi.string().uuid().required(),
+  rating: Joi.number().integer().min(1).max(5).required(),
+  review: Joi.string().trim().max(2000).allow(null, '').optional(),
+});
 
 const slotBlockSchema = Joi.object({
   slot_date: Joi.date().iso().required(),
@@ -147,6 +168,9 @@ function validate(schema) {
 module.exports = {
   validateLogin: validate(loginSchema),
   validateBooking: validate(bookingSchema),
+  validateStaff: validate(staffSchema),
+  validateStaffUpdate: validate(staffUpdateSchema),
+  validateReview: validate(reviewSchema),
   validateSalonApplication: validate(salonApplicationSchema),
   validateSlotBlock: validate(slotBlockSchema),
   validatePremiumBookingFee: validate(premiumBookingFeeSchema),

@@ -11,6 +11,9 @@ const {
   validateSalonApplication,
   validateSlotBlock,
   validatePremiumBookingFee,
+  validateStaff,
+  validateStaffUpdate,
+  validateReview,
 } = require('../validators/authValidator');
 const {
   validateCreateRazorpayOrder,
@@ -29,7 +32,7 @@ const {
 const deviceTokenCtrl = require('../controllers/deviceTokenController');
 const notificationCtrl = require('../controllers/notificationController');
 const { validateListNotifications } = require('../validators/notificationValidator');
-const { uploadSalonImages, uploadProfileImage } = require('../middlewares/upload');
+const { uploadSalonImages, uploadProfileImage, uploadStaffImage } = require('../middlewares/upload');
 const {
   validateOwnerDashboardQuery,
   validateOwnerDashboardScheduleQuery,
@@ -78,7 +81,7 @@ router.get('/booking-groups/:groupId/checkout-summary', authMiddleware, roleMidd
 router.post('/payments/razorpay/order', authMiddleware, roleMiddleware(['CUSTOMER']), validateCreateRazorpayOrder, asyncHandler(ctrl.createRazorpayOrder));
 router.post('/payments/razorpay/verify', authMiddleware, roleMiddleware(['CUSTOMER']), validateVerifyRazorpayPayment, asyncHandler(ctrl.verifyRazorpayPayment));
 router.post('/payments/pay-at-shop', authMiddleware, roleMiddleware(['CUSTOMER']), validatePayAtShop, asyncHandler(ctrl.selectPayAtShop));
-router.post('/reviews', authMiddleware, roleMiddleware(['CUSTOMER']), asyncHandler(ctrl.createReview));
+router.post('/reviews', authMiddleware, roleMiddleware(['CUSTOMER']), validateReview, asyncHandler(ctrl.createReview));
 
 // Salon owner registration & applications
 router.post('/salon-owner/register', authMiddleware, asyncHandler(ctrl.registerSalonOwner));
@@ -88,6 +91,13 @@ router.post(
   roleMiddleware(['SALON_OWNER']),
   uploadSalonImages.array('images', 10),
   asyncHandler(ctrl.uploadSalonImages),
+);
+router.post(
+  '/uploads/staff-image',
+  authMiddleware,
+  roleMiddleware(['SALON_OWNER']),
+  uploadStaffImage.single('image'),
+  asyncHandler(ctrl.uploadStaffImage),
 );
 router.post('/salon-applications', authMiddleware, roleMiddleware(['SALON_OWNER']), validateSalonApplication, asyncHandler(ctrl.submitSalonApplication));
 
@@ -100,6 +110,9 @@ router.put('/owner/salons/:salonId/premium-booking', authMiddleware, roleMiddlew
 router.get('/owner/salons/:salonId/services', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.getOwnerServices));
 router.post('/owner/salons/:salonId/services', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.createOwnerService));
 router.put('/owner/salons/:salonId/services/:serviceId', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.updateOwnerService));
+router.get('/owner/salons/:salonId/staff', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.getOwnerStaff));
+router.post('/owner/salons/:salonId/staff', authMiddleware, roleMiddleware(['SALON_OWNER']), validateStaff, asyncHandler(ctrl.createOwnerStaff));
+router.put('/owner/salons/:salonId/staff/:staffId', authMiddleware, roleMiddleware(['SALON_OWNER']), validateStaffUpdate, asyncHandler(ctrl.updateOwnerStaff));
 router.get('/owner/bookings', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.getOwnerBookings));
 router.patch('/owner/bookings/:id/accept', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.acceptBooking));
 router.patch('/owner/bookings/:id/reject', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.rejectBooking));

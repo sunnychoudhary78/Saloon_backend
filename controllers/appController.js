@@ -10,6 +10,7 @@ const {
   Salon,
   Service,
   ServiceCategory,
+  SalonStaff,
   Customer,
   Booking,
   Review,
@@ -50,6 +51,8 @@ const { notifyNewReview } = require('../services/reviewNotificationHelper');
 const {
   attachRatingSummary,
   getBatchSalonRatingSummaries,
+  attachStaffRatingSummaries,
+  attachAndSortStaffByRating,
   isBookingReviewable,
   shapeBookingReviewFlags,
   shapePublicReview,
@@ -57,6 +60,7 @@ const {
 const {
   generateSalonImageVariants,
   generateProfileImage,
+  generateStaffImage,
   shapeGalleryForDetail,
   shapeCoverForDetail,
 } = require('../services/imageProcessingService');
@@ -136,10 +140,20 @@ function hasPremiumFee(booking) {
 }
 
 const CUSTOMER_SALON_ATTRS = ['id', 'salon_name', 'city', 'phone'];
+const STAFF_BOOKING_ATTRS = ['id', 'name', 'profile_image'];
 const CONFIRMED_BOOKING_STATUSES = new Set(['ACCEPTED', 'COMPLETED']);
 
 function customerSalonInclude() {
   return { model: Salon, as: 'salon', attributes: CUSTOMER_SALON_ATTRS };
+}
+
+function staffBookingInclude() {
+  return {
+    model: SalonStaff,
+    as: 'staff',
+    attributes: STAFF_BOOKING_ATTRS,
+    required: false,
+  };
 }
 
 function ownerBookingDetailInclude() {
@@ -151,6 +165,7 @@ function ownerBookingDetailInclude() {
     },
     { model: Service, as: 'service', attributes: ['id', 'service_name', 'price', 'discount_price'] },
     { model: Salon, as: 'salon', attributes: ['id', 'salon_name', 'city'] },
+    staffBookingInclude(),
     paymentInclude(),
   ];
 }
@@ -297,6 +312,42 @@ function buildOwnerServicePayload(body, existing = null) {
     if (payload.discount_price >= effectivePrice) {
       throw new AppError('discount_price must be lower than price', 400);
     }
+  }
+
+  return payload;
+}
+
+function buildOwnerStaffPayload(body, existing = null) {
+  const payload = {};
+
+  if (body.name !== undefined) {
+    const name = String(body.name || '').trim();
+    if (!name) throw new AppError('name is required', 400);
+    payload.name = name;
+  }
+  if (body.profile_image !== undefined) {
+    payload.profile_image = body.profile_image
+      ? String(body.profile_image).trim()
+      : null;
+  }
+  if (body.status !== undefined) {
+    if (!['ACTIVE', 'INACTIVE'].includes(body.status)) {
+      throw new AppError('Invalid staff status', 400);
+    }
+    payload.status = body.status;
+  }
+  if (body.sort_order !== undefined) {
+    const sortOrder = parseInt(body.sort_order, 10);
+    if (!Number.isFinite(sortOrder) || sortOrder < 0) {
+      throw new AppError('sort_order must be a non-negative integer', 400);
+    }
+    payload.sort_order = sortOrder;
+  }
+
+  if (!existing) {
+    if (!payload.name) throw new AppError('name is required', 400);
+    if (payload.status === undefined) payload.status = 'ACTIVE';
+    if (payload.sort_order === undefined) payload.sort_order = 0;
   }
 
   return payload;
@@ -763,17 +814,28 @@ exports.getSalon = async (req, res, next) => {
   try {
     const salon = await Salon.findOne({
       where: { id: req.params.id, status: 'ACTIVE', is_active: true },
-      include: [{
-        model: Service,
-        as: 'services',
-        where: { status: 'ACTIVE' },
-        required: false,
-        include: [{ model: ServiceCategory, as: 'category', attributes: ['id', 'name'] }],
-      }],
+      include: [
+        {
+          model: Service,
+          as: 'services',
+          where: { status: 'ACTIVE' },
+          required: false,
+          include: [{ model: ServiceCategory, as: 'category', attributes: ['id', 'name'] }],
+        },
+        {
+          model: SalonStaff,
+          as: 'staff',
+          where: { status: 'ACTIVE', is_active: true },
+          required: false,
+          separate: true,
+          order: [['sort_order', 'ASC'], ['name', 'ASC']],
+        },
+      ],
     });
     if (!salon) throw new AppError('Salon not found', 404);
     const userCoords = parseUserCoordinates(req.query);
     let data = await attachRatingSummary(salon.toJSON());
+    data.staff = await attachAndSortStaffByRating(data.staff || []);
     data = userCoords
       ? attachDistance(data, userCoords.userLat, userCoords.userLng)
       : shapeSalonDistanceFields(data);
@@ -834,6 +896,7 @@ exports.createBooking = async (req, res, next) => {
       booking_time,
       notes,
       is_premium: isPremium,
+      staff_id: staffIdBody,
     } = req.body;
 
     const serviceIds = Array.isArray(serviceIdsBody) && serviceIdsBody.length > 0
@@ -844,6 +907,21 @@ exports.createBooking = async (req, res, next) => {
 
     if (!salon_id || serviceIds.length === 0 || !booking_date || !booking_time) {
       throw new AppError('salon_id, service_id or service_ids, booking_date, booking_time are required', 400);
+    }
+
+    let preferredStaffId = null;
+    if (staffIdBody) {
+      const staff = await SalonStaff.findOne({
+        where: {
+          id: staffIdBody,
+          salon_id,
+          status: 'ACTIVE',
+          is_active: true,
+        },
+        transaction: t,
+      });
+      if (!staff) throw new AppError('Preferred staff not found for this salon', 404);
+      preferredStaffId = staff.id;
     }
 
     const slotInfo = await assertSlotBookable(salon_id, booking_date, booking_time, {
@@ -883,6 +961,7 @@ exports.createBooking = async (req, res, next) => {
         customer_id: customer.id,
         salon_id,
         service_id: currentServiceId,
+        staff_id: preferredStaffId,
         booking_date,
         booking_time: normalizedTime,
         notes,
@@ -917,6 +996,7 @@ exports.createBooking = async (req, res, next) => {
       include: [
         customerSalonInclude(),
         { model: Service, as: 'service', attributes: ['id', 'service_name', 'price'] },
+        staffBookingInclude(),
         paymentInclude(),
       ],
       order: [['created_at', 'ASC']],
@@ -947,6 +1027,7 @@ exports.getMyBookings = async (req, res, next) => {
       include: [
         customerSalonInclude(),
         { model: Service, as: 'service', attributes: ['id', 'service_name', 'price', 'discount_price', 'duration_minutes'] },
+        staffBookingInclude(),
         { model: Review, as: 'review', required: false },
         paymentInclude(),
       ],
@@ -1245,14 +1326,6 @@ exports.createReview = async (req, res, next) => {
     if (!customer) throw new AppError('Customer profile not found', 404);
 
     const { booking_id, rating, review } = req.body;
-    if (!booking_id || rating === undefined || rating === null) {
-      throw new AppError('booking_id and rating are required', 400);
-    }
-
-    const parsedRating = parseInt(rating, 10);
-    if (!Number.isInteger(parsedRating) || parsedRating < 1 || parsedRating > 5) {
-      throw new AppError('rating must be an integer between 1 and 5', 400);
-    }
 
     const existingReview = await Review.findOne({ where: { booking_id } });
     if (existingReview) {
@@ -1273,8 +1346,8 @@ exports.createReview = async (req, res, next) => {
       customer_id: customer.id,
       salon_id: booking.salon_id,
       booking_id,
-      rating: parsedRating,
-      review,
+      rating,
+      review: review || null,
       status: 'PUBLISHED',
       created_by: req.user.id,
       updated_by: req.user.id,
@@ -1282,6 +1355,9 @@ exports.createReview = async (req, res, next) => {
     notifyNewReview(row.id);
     res.status(201).json({ data: row });
   } catch (err) {
+    if (err.name === 'SequelizeUniqueConstraintError') {
+      return next(new AppError('You have already reviewed this booking', 409));
+    }
     next(err);
   }
 };
@@ -1445,6 +1521,54 @@ exports.updateOwnerService = async (req, res, next) => {
   }
 };
 
+exports.getOwnerStaff = async (req, res, next) => {
+  try {
+    await assertSalonOwnership(req.user.id, req.params.salonId);
+    const staff = await SalonStaff.findAll({
+      where: { salon_id: req.params.salonId },
+      order: [['sort_order', 'ASC'], ['name', 'ASC']],
+    });
+    const shaped = await attachAndSortStaffByRating(staff.map((row) => row.toJSON()));
+    res.json({ data: shaped });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.createOwnerStaff = async (req, res, next) => {
+  try {
+    await assertSalonOwnership(req.user.id, req.params.salonId);
+    const payload = buildOwnerStaffPayload(req.body);
+    const staff = await SalonStaff.create({
+      salon_id: req.params.salonId,
+      ...payload,
+      created_by: req.user.id,
+      updated_by: req.user.id,
+    });
+    const shaped = (await attachStaffRatingSummaries([staff.toJSON()]))[0];
+    res.status(201).json({ data: shaped });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.updateOwnerStaff = async (req, res, next) => {
+  try {
+    await assertSalonOwnership(req.user.id, req.params.salonId);
+    const staff = await SalonStaff.findOne({
+      where: { id: req.params.staffId, salon_id: req.params.salonId },
+    });
+    if (!staff) throw new AppError('Staff not found', 404);
+    Object.assign(staff, buildOwnerStaffPayload(req.body, staff));
+    staff.updated_by = req.user.id;
+    await staff.save();
+    const shaped = (await attachStaffRatingSummaries([staff.toJSON()]))[0];
+    res.json({ data: shaped });
+  } catch (err) {
+    next(err);
+  }
+};
+
 exports.getOwnerBookings = async (req, res, next) => {
   try {
     const owner = await getSalonOwnerForUser(req.user.id);
@@ -1461,6 +1585,7 @@ exports.getOwnerBookings = async (req, res, next) => {
         { model: Customer, as: 'customer', include: [{ model: User, as: 'user', attributes: ['name', 'phone', 'email'] }] },
         { model: Service, as: 'service', attributes: ['service_name', 'price', 'discount_price'] },
         { model: Salon, as: 'salon', attributes: ['salon_name'] },
+        staffBookingInclude(),
         paymentInclude(),
       ],
       order: [['created_at', 'DESC']],
@@ -1778,6 +1903,25 @@ exports.uploadProfileImage = async (req, res, next) => {
     const baseUrl = `${req.protocol}://${req.get('host')}`;
     const path = require('path');
     const url = await generateProfileImage(
+      path.join(req.file.destination, req.file.filename),
+      baseUrl,
+    );
+
+    res.status(201).json({ data: { url } });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.uploadStaffImage = async (req, res, next) => {
+  try {
+    if (!req.file) {
+      throw new AppError('No image uploaded', 400);
+    }
+
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const path = require('path');
+    const url = await generateStaffImage(
       path.join(req.file.destination, req.file.filename),
       baseUrl,
     );

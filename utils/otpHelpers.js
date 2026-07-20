@@ -44,7 +44,7 @@ function sanitizeOtpDeliveryError(err) {
   if (/smtp|mail|email/i.test(msg)) {
     return 'We could not send the OTP email. Please try again or contact support.';
   }
-  if (/sms|gateway|message india/i.test(msg)) {
+  if (/sms|gateway|msg91/i.test(msg)) {
     return 'We could not send SMS. Please check your number and try again.';
   }
   if (/incomplete|configuration/i.test(msg)) {

@@ -3,6 +3,7 @@
 require('dotenv').config();
 
 const { PlatformSetting, sequelize } = require('../models');
+const { normalizeLegacyConfig } = require('../utils/smsService');
 
 async function main() {
   await sequelize.authenticate();
@@ -13,19 +14,21 @@ async function main() {
     process.exit(0);
   }
 
-  const config = row.setting_value;
+  const config = normalizeLegacyConfig(row.setting_value);
   console.log('sms_config row: FOUND');
+  console.log('  provider:', config?.provider || '(missing)');
   console.log('  enabled:', config?.enabled);
-  console.log('  sms_url:', config?.sms_url || '(empty)');
-  console.log('  has apikey:', Boolean(config?.sms_apikey));
-  console.log('  message has -- placeholder:', String(config?.sms_message || '').includes('--'));
+  console.log('  has auth_key:', Boolean(config?.auth_key));
+  console.log('  sender_id:', config?.sender_id || '(empty)');
+  console.log('  template_id:', config?.template_id || '(empty)');
+  console.log('  message has -- placeholder:', String(config?.message_template || '').includes('--'));
 
-  const required = ['sms_url', 'sms_username', 'sms_sendername', 'sms_smstype', 'sms_apikey'];
-  const missing = required.filter((f) => !config?.[f]);
+  const required = ['provider', 'auth_key', 'sender_id', 'template_id', 'message_template'];
+  const missing = required.filter((f) => !String(config?.[f] || '').trim());
   if (config?.enabled && missing.length) {
     console.log('  WARNING: enabled but missing fields:', missing.join(', '));
   } else if (config?.enabled) {
-    console.log('  STATUS: ready to send OTP SMS');
+    console.log('  STATUS: ready to send OTP SMS via MSG91');
   } else {
     console.log('  STATUS: disabled until admin enables in Platform Settings');
   }

@@ -15,17 +15,13 @@ module.exports = {
     const now = new Date();
     const id = uuidv4();
     const settingValue = {
+      provider: 'msg91',
       enabled: false,
-      sms_url: '',
-      sms_username: '',
-      sms_sendername: '',
-      sms_smstype: 'TRANS',
-      sms_apikey: '',
-      sms_peid: '',
-      sms_templateid: '',
-      sms_message:
-        '<#> Your OTP for Immortal HRMS is --. Valid for 5 minutes. Do not share this code.\n',
-      sms_app_hash: '',
+      auth_key: '',
+      sender_id: '',
+      template_id: '',
+      message_template:
+        'Your OTP for CATCHY is --. Valid for 5 minutes. Do not share this code.',
     };
 
     await queryInterface.sequelize.query(
@@ -37,7 +33,7 @@ module.exports = {
         replacements: {
           id,
           setting_value: JSON.stringify(settingValue),
-          description: 'SMS gateway configuration for customer OTP',
+          description: 'SMS gateway configuration for customer OTP (MSG91)',
           now,
         },
       }

@@ -114,6 +114,14 @@ async function sendOtpSms(mobile, otp) {
     console.log(`[OTP SMS] MSG91 preview for ${mobileIntl}: ${preview}`);
   }
 
+  console.log('[MSG91 REQUEST]', {
+    template_id: config.template_id,
+    mobile: mobileIntl,
+    otp: String(otp),
+    otp_expiry: OTP_EXPIRY_MINUTES,
+    otp_length: OTP_LENGTH,
+  });
+
   const response = await axios.post(
     MSG91_OTP_URL,
     {
@@ -142,6 +150,11 @@ async function sendOtpSms(mobile, otp) {
   if (type && type !== 'success') {
     throw new Error(`MSG91 SMS failed: ${parseMsg91Error(data)}`);
   }
+
+  console.log('[MSG91 RESPONSE]', {
+    status: response.status,
+    data: response.data,
+  });
 
   if (process.env.NODE_ENV !== 'production') {
     console.log(`[OTP SMS] MSG91 sent to ${mobileIntl}, status=${response.status}`);

@@ -86,18 +86,6 @@ const salonRegistry = [
   { key: "created_at", label: "Created At", path: "created_at", type: "date" },
 ];
 
-const serviceCategoryRegistry = [
-  { key: "name", label: "Name", path: "name", type: "string" },
-  {
-    key: "sort_order",
-    label: "Sort Order",
-    path: "sort_order",
-    type: "number",
-  },
-  { key: "status", label: "Status", path: "status", type: "string" },
-  { key: "created_at", label: "Created At", path: "created_at", type: "date" },
-];
-
 const serviceRegistry = [
   {
     key: "service_name",
@@ -111,12 +99,7 @@ const serviceRegistry = [
     path: "salon.salon_name",
     type: "string",
   },
-  {
-    key: "category_name",
-    label: "Category",
-    path: "category.name",
-    type: "string",
-  },
+  { key: "description", label: "Description", path: "description", type: "string" },
   { key: "price", label: "Price", path: "price", type: "number" },
   {
     key: "discount_price",
@@ -258,7 +241,6 @@ module.exports = {
   salonOwnerRegistry,
   salonApplicationRegistry,
   salonRegistry,
-  serviceCategoryRegistry,
   serviceRegistry,
   customerRegistry,
   bookingRegistry,
@@ -270,7 +252,6 @@ module.exports = {
   salonOwnerRegistryByKey: toRegistryMap(salonOwnerRegistry),
   salonApplicationRegistryByKey: toRegistryMap(salonApplicationRegistry),
   salonRegistryByKey: toRegistryMap(salonRegistry),
-  serviceCategoryRegistryByKey: toRegistryMap(serviceCategoryRegistry),
   serviceRegistryByKey: toRegistryMap(serviceRegistry),
   customerRegistryByKey: toRegistryMap(customerRegistry),
   bookingRegistryByKey: toRegistryMap(bookingRegistry),

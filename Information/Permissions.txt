@@ -12,9 +12,6 @@
 ## Salons
 - salon.read, salon.create, salon.update, salon.suspend, salon.close
 
-## Service Categories
-- serviceCategory.read, serviceCategory.create, serviceCategory.update, serviceCategory.makeInactive
-
 ## Services
 - service.read, service.create, service.update, service.makeInactive
 

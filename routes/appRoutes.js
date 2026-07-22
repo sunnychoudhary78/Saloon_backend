@@ -63,7 +63,6 @@ router.patch('/notifications/read-all', authMiddleware, asyncHandler(notificatio
 router.patch('/notifications/:id/read', authMiddleware, asyncHandler(notificationCtrl.markRead));
 router.get('/banners', authMiddleware, asyncHandler(ctrl.getBanners));
 router.post('/coupons/validate', authMiddleware, asyncHandler(ctrl.validateCoupon));
-router.get('/service-categories', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.getServiceCategories));
 router.get('/places/search', authMiddleware, roleMiddleware(['CUSTOMER', 'SALON_OWNER']), asyncHandler(ctrl.searchPlaces));
 router.get('/places/details', authMiddleware, roleMiddleware(['CUSTOMER', 'SALON_OWNER']), asyncHandler(ctrl.getPlaceDetails));
 router.get('/places/reverse', authMiddleware, roleMiddleware(['CUSTOMER', 'SALON_OWNER']), asyncHandler(ctrl.reverseGeocodePlace));

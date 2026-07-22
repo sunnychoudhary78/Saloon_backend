@@ -56,7 +56,6 @@ app.use('/api/stats', require('./routes/statsRoutes'));
 app.use('/api/salon-owners', require('./routes/salonOwnerRoutes'));
 app.use('/api/salon-applications', require('./routes/salonApplicationRoutes'));
 app.use('/api/salons', require('./routes/salonRoutes'));
-app.use('/api/service-categories', require('./routes/serviceCategoryRoutes'));
 app.use('/api/services', require('./routes/serviceRoutes'));
 app.use('/api/customers', require('./routes/customerRoutes'));
 app.use('/api/bookings', require('./routes/bookingRoutes'));

@@ -4,6 +4,13 @@ const { genericQuery } = require('../services/genericQueryService');
 const { bannerRegistryByKey } = require('../config/columnRegistry');
 
 const defaultColumns = ['title', 'redirect_type', 'sort_order', 'status'];
+const redirectTypes = new Set(['NONE', 'SALON', 'SERVICE', 'EXTERNAL_URL']);
+
+function validateRedirectType(value) {
+  if (value !== undefined && !redirectTypes.has(value)) {
+    throw new AppError('Invalid redirect_type', 400);
+  }
+}
 
 exports.query = async (req, res, next) => {
   try {
@@ -18,6 +25,7 @@ exports.create = async (req, res, next) => {
   try {
     const { title, image, redirect_type, redirect_value, sort_order, status } = req.body;
     if (!title || !image) throw new AppError('title and image are required', 400);
+    validateRedirectType(redirect_type);
     const row = await PromotionalBanner.create({
       title,
       image,
@@ -38,6 +46,7 @@ exports.update = async (req, res, next) => {
   try {
     const row = await PromotionalBanner.findByPk(req.params.id);
     if (!row) throw new AppError('Banner not found', 404);
+    validateRedirectType(req.body.redirect_type);
     const fields = ['title', 'image', 'redirect_type', 'redirect_value', 'sort_order', 'status'];
     for (const f of fields) {
       if (req.body[f] !== undefined) row[f] = req.body[f];

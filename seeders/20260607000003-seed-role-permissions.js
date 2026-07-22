@@ -10,7 +10,7 @@ const ROLE_PERMISSIONS = {
     'salonOwner.read', 'salonOwner.update', 'salonOwner.block',
     'salonApplication.read', 'salonApplication.approve', 'salonApplication.reject',
     'salon.read', 'salon.update', 'salon.suspend',
-    'serviceCategory.read', 'service.read',
+    'service.read',
     'customer.read', 'customer.update', 'customer.block',
     'booking.read', 'booking.update',
     'review.read', 'review.moderate', 'review.hide',
@@ -21,7 +21,7 @@ const ROLE_PERMISSIONS = {
     'coupon.read', 'coupon.create', 'coupon.update', 'coupon.makeInactive',
     'banner.read', 'banner.create', 'banner.update', 'banner.makeInactive',
     'review.read', 'review.moderate', 'review.hide',
-    'salon.read', 'serviceCategory.read',
+    'salon.read',
   ],
 };
 

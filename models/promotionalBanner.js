@@ -11,7 +11,7 @@ module.exports = (sequelize, DataTypes) => {
       title: { type: DataTypes.STRING, allowNull: false },
       image: { type: DataTypes.STRING, allowNull: false },
       redirect_type: {
-        type: DataTypes.ENUM('NONE', 'SALON', 'SERVICE', 'CATEGORY', 'EXTERNAL_URL'),
+        type: DataTypes.ENUM('NONE', 'SALON', 'SERVICE', 'EXTERNAL_URL'),
         allowNull: false,
         defaultValue: 'NONE',
       },

@@ -235,14 +235,6 @@ async function getRoleId(queryInterface, roleName) {
   return role.id;
 }
 
-async function getCategoryMap(queryInterface) {
-  const rows = await queryInterface.sequelize.query(
-    `SELECT id, name FROM ${schema}.service_categories`,
-    { type: queryInterface.sequelize.QueryTypes.SELECT }
-  );
-  return Object.fromEntries(rows.map((r) => [r.name, r.id]));
-}
-
 async function userExists(queryInterface, phone) {
   const [row] = await queryInterface.sequelize.query(
     `SELECT id FROM ${schema}.users WHERE phone = :phone LIMIT 1`,
@@ -257,7 +249,6 @@ module.exports = {
     const urlMap = await prepareSeedSalonImages();
     const ownerRoleId = await getRoleId(queryInterface, 'SALON_OWNER');
     const customerRoleId = await getRoleId(queryInterface, 'CUSTOMER');
-    const catByName = await getCategoryMap(queryInterface);
 
     for (const owner of OWNERS) {
       if (await userExists(queryInterface, owner.phone)) {
@@ -324,15 +315,11 @@ module.exports = {
         }]);
 
         for (const svc of salon.services) {
-          const categoryId = catByName[svc.category];
-          if (!categoryId) throw new Error(`Category not found: ${svc.category}`);
-
           await queryInterface.bulkInsert({ schema, tableName: 'services' }, [{
             id: uuidv4(),
             salon_id: salonId,
-            category_id: categoryId,
-            service_name: svc.name,
-            description: null,
+            service_name: svc.category,
+            description: svc.name,
             duration_minutes: svc.duration,
             price: svc.price,
             discount_price: null,

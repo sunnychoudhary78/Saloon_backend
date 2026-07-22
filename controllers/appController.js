@@ -9,7 +9,6 @@ const {
   SalonApplication,
   Salon,
   Service,
-  ServiceCategory,
   SalonStaff,
   Customer,
   Booking,
@@ -48,6 +47,10 @@ const {
 } = require('../services/bookingNotificationHelper');
 const { notifySalonApplicationSubmitted } = require('../services/salonApplicationNotificationHelper');
 const { notifyNewReview } = require('../services/reviewNotificationHelper');
+const {
+  assertUniqueServiceIdentity,
+  mapServiceIdentityConflict,
+} = require('../services/serviceIdentityService');
 const {
   attachRatingSummary,
   getBatchSalonRatingSummaries,
@@ -269,8 +272,10 @@ function shapeDiscountSummary(json) {
 function buildOwnerServicePayload(body, existing = null) {
   const payload = {};
 
-  if (body.category_id !== undefined) payload.category_id = body.category_id;
-  if (body.service_name !== undefined) payload.service_name = String(body.service_name).trim();
+  if (body.service_name !== undefined) {
+    payload.service_name = String(body.service_name).trim();
+    if (!payload.service_name) throw new AppError('service_name is required', 400);
+  }
   if (body.description !== undefined) {
     payload.description = body.description ? String(body.description).trim() : null;
   }
@@ -297,7 +302,6 @@ function buildOwnerServicePayload(body, existing = null) {
   }
 
   if (!existing) {
-    if (!payload.category_id) throw new AppError('category_id is required', 400);
     if (!payload.service_name) throw new AppError('service_name is required', 400);
     if (payload.price === undefined) throw new AppError('price is required', 400);
     if (payload.duration_minutes === undefined) payload.duration_minutes = 30;
@@ -820,7 +824,6 @@ exports.getSalon = async (req, res, next) => {
           as: 'services',
           where: { status: 'ACTIVE' },
           required: false,
-          include: [{ model: ServiceCategory, as: 'category', attributes: ['id', 'name'] }],
         },
         {
           model: SalonStaff,
@@ -1433,18 +1436,6 @@ exports.reverseGeocodePlace = async (req, res, next) => {
   }
 };
 
-exports.getServiceCategories = async (req, res, next) => {
-  try {
-    const rows = await ServiceCategory.findAll({
-      where: { status: 'ACTIVE', is_active: true },
-      order: [['sort_order', 'ASC'], ['name', 'ASC']],
-    });
-    res.json({ data: rows });
-  } catch (err) {
-    next(err);
-  }
-};
-
 exports.validateCoupon = async (req, res, next) => {
   try {
     const { code } = req.body;
@@ -1483,7 +1474,6 @@ exports.getOwnerServices = async (req, res, next) => {
     await assertSalonOwnership(req.user.id, req.params.salonId);
     const services = await Service.findAll({
       where: { salon_id: req.params.salonId },
-      include: [{ model: ServiceCategory, as: 'category', attributes: ['id', 'name'] }],
     });
     res.json({ data: services });
   } catch (err) {
@@ -1495,6 +1485,12 @@ exports.createOwnerService = async (req, res, next) => {
   try {
     await assertSalonOwnership(req.user.id, req.params.salonId);
     const payload = buildOwnerServicePayload(req.body);
+    await assertUniqueServiceIdentity({
+      salonId: req.params.salonId,
+      serviceName: payload.service_name,
+      description: payload.description,
+      price: payload.price,
+    });
     const service = await Service.create({
       salon_id: req.params.salonId,
       ...payload,
@@ -1503,7 +1499,7 @@ exports.createOwnerService = async (req, res, next) => {
     });
     res.status(201).json({ data: service });
   } catch (err) {
-    next(err);
+    next(mapServiceIdentityConflict(err));
   }
 };
 
@@ -1513,11 +1509,18 @@ exports.updateOwnerService = async (req, res, next) => {
     const service = await Service.findOne({ where: { id: req.params.serviceId, salon_id: req.params.salonId } });
     if (!service) throw new AppError('Service not found', 404);
     Object.assign(service, buildOwnerServicePayload(req.body, service));
+    await assertUniqueServiceIdentity({
+      salonId: req.params.salonId,
+      serviceName: service.service_name,
+      description: service.description,
+      price: service.price,
+      excludeId: service.id,
+    });
     service.updated_by = req.user.id;
     await service.save();
     res.json({ data: service });
   } catch (err) {
-    next(err);
+    next(mapServiceIdentityConflict(err));
   }
 };
 

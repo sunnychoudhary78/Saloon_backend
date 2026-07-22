@@ -51,6 +51,7 @@ const {
   assertUniqueServiceIdentity,
   mapServiceIdentityConflict,
 } = require('../services/serviceIdentityService');
+const { SALON_SERVICE_NAMES } = require('../constants/salonServiceNames');
 const {
   attachRatingSummary,
   getBatchSalonRatingSummaries,
@@ -1464,6 +1465,14 @@ exports.getOwnerSalons = async (req, res, next) => {
         return json;
       }),
     });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.getServiceNames = async (req, res, next) => {
+  try {
+    res.json({ data: SALON_SERVICE_NAMES });
   } catch (err) {
     next(err);
   }

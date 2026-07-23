@@ -39,6 +39,11 @@ async function resetSchema() {
 async function main() {
   const appEnv = (process.env.APP_ENV || 'development').toLowerCase();
   const cliEnv = { ...process.env, NODE_ENV: appEnv };
+  const seedApiBase = process.env.SEED_API_BASE || 'http://192.168.1.26:3011/api';
+
+  console.log(`Full wipe + migrate + seed (APP_ENV=${appEnv})`);
+  console.log(`SEED_API_BASE=${seedApiBase} (salon/staff image URLs)`);
+  console.log('Staff sources: uploads/seed-staff/{N}.* → uploads/staff/seed-{N}.jpg');
 
   await resetSchema();
   console.log('Running migrations...');

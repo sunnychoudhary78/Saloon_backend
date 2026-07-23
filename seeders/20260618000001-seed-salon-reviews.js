@@ -127,6 +127,13 @@ module.exports = {
       );
       if (services.length === 0) continue;
 
+      const staffMembers = await queryInterface.sequelize.query(
+        `SELECT id FROM ${schema}.salon_staff
+         WHERE salon_id = :salonId AND status = 'ACTIVE'
+         ORDER BY sort_order ASC, created_at ASC`,
+        { replacements: { salonId: salon.id }, type: queryInterface.sequelize.QueryTypes.SELECT }
+      );
+
       const reviewCount = 3 + (bookingSeq % 4);
       const bookings = [];
       const reviews = [];
@@ -134,6 +141,7 @@ module.exports = {
       for (let i = 0; i < reviewCount; i += 1) {
         const customer = seedCustomers[i % seedCustomers.length];
         const service = services[i % services.length];
+        const staff = staffMembers.length > 0 ? staffMembers[i % staffMembers.length] : null;
         const template = REVIEW_TEMPLATES[(bookingSeq + i) % REVIEW_TEMPLATES.length];
         const bookingId = uuidv4();
         const bookingDate = daysAgo(10 + i * 3);
@@ -145,6 +153,7 @@ module.exports = {
           customer_id: customer.id,
           salon_id: salon.id,
           service_id: service.id,
+          staff_id: staff?.id ?? null,
           booking_date: bookingDate,
           booking_time: bookingTime,
           notes: null,

@@ -2,9 +2,18 @@
 
 const { v4: uuidv4 } = require('uuid');
 const { prepareSeedSalonImages, imageUrls } = require('./helpers/seedSalonImages');
+const { prepareSeedStaffImages, staffImageUrl } = require('./helpers/seedStaffImages');
 
 const schema = process.env.DB_SCHEMA || 'salon_booking_schema';
 
+/**
+ * Demo dataset for `npm run db:reset` (full wipe → migrate → seed).
+ * Always inserts — do not re-run against a DB that already has these phones.
+ *
+ * Services use a single customer-facing `service_name` (post-flatten).
+ * Prefer exact names from constants/salonServiceNames.js when unique per salon
+ * so app icons resolve; use distinct custom names for variants.
+ */
 const OWNERS = [
   {
     name: 'Priya Menon',
@@ -13,7 +22,7 @@ const OWNERS = [
     salons: [
       {
         salon_name: 'Glow & Grace',
-        description: 'Premium beauty and hair studio for women.',
+        description: 'Premium beauty and hair studio for women — cuts, colour, and skin care under one roof.',
         address: 'Shipra Mall, Ahinsa Khand, Indirapuram',
         city: 'Ghaziabad',
         state: 'Uttar Pradesh',
@@ -21,11 +30,19 @@ const OWNERS = [
         longitude: 77.3695,
         opening_time: '09:00:00',
         closing_time: '21:00:00',
+        is_featured: true,
+        featured_sort_order: 1,
         imageIds: [1, 2, 3],
+        staff: [
+          { name: 'Sneha Kapoor', imageId: 1 },
+          { name: 'Anjali Verma', imageId: 2 },
+          { name: 'Riya Malhotra', imageId: 3 },
+        ],
         services: [
-          { name: 'Haircut', description: 'Women Haircut', price: 499, duration: 45 },
-          { name: 'Hair Color', description: 'Global Color', price: 2499, duration: 120 },
-          { name: 'Facial', description: 'Gold Facial', price: 1299, duration: 60 },
+          { service_name: 'Haircut', description: 'Consultation, wash, and precision cut for women.', price: 499, duration: 45 },
+          { service_name: 'Hair Color', description: 'Global colour with ammonia-free formulas.', price: 2499, duration: 120 },
+          { service_name: 'Facial', description: 'Gold facial for glow and deep cleanse.', price: 1299, duration: 60 },
+          { service_name: 'Threading', description: 'Eyebrow and upper-lip threading.', price: 99, duration: 15 },
         ],
       },
     ],
@@ -37,7 +54,7 @@ const OWNERS = [
     salons: [
       {
         salon_name: 'Elite Cuts',
-        description: 'Modern men grooming and styling lounge.',
+        description: 'Modern men\'s grooming lounge — sharp cuts, beard work, and quick colour.',
         address: 'Indirapuram Habitat Centre, Ahinsa Khand',
         city: 'Ghaziabad',
         state: 'Uttar Pradesh',
@@ -45,11 +62,18 @@ const OWNERS = [
         longitude: 77.3706,
         opening_time: '10:00:00',
         closing_time: '20:00:00',
+        is_featured: true,
+        featured_sort_order: 2,
         imageIds: [4, 5],
+        staff: [
+          { name: 'Amit Khanna', imageId: 4 },
+          { name: 'Kunal Joshi', imageId: 5 },
+        ],
         services: [
-          { name: 'Haircut', description: 'Men Premium Cut', price: 399, duration: 30 },
-          { name: 'Beard Trim', description: 'Beard Styling', price: 199, duration: 20 },
-          { name: 'Hair Color', description: 'Beard Color', price: 299, duration: 25 },
+          { service_name: 'Haircut', description: 'Premium men\'s cut with styling.', price: 399, duration: 30 },
+          { service_name: 'Beard Trim', description: 'Beard shape-up and line-up.', price: 199, duration: 20 },
+          { service_name: 'Hair Color', description: 'Beard and sideburn colour touch-up.', price: 299, duration: 25 },
+          { service_name: 'Head Massage', description: 'Relaxing oil head massage.', price: 249, duration: 20 },
         ],
       },
     ],
@@ -61,7 +85,7 @@ const OWNERS = [
     salons: [
       {
         salon_name: 'Urban Style Salon',
-        description: 'Trendy cuts and colors for all ages.',
+        description: 'Trendy cuts and colours for all ages, steps from Vaishali Metro.',
         address: 'Near Vaishali Metro Station, Sector 4',
         city: 'Ghaziabad',
         state: 'Uttar Pradesh',
@@ -69,16 +93,24 @@ const OWNERS = [
         longitude: 77.3398,
         opening_time: '09:30:00',
         closing_time: '21:30:00',
+        is_featured: false,
+        featured_sort_order: 0,
         imageIds: [6, 7, 8, 9],
+        staff: [
+          { name: 'Pooja Nair', imageId: 1 },
+          { name: 'Deepak Rao', imageId: 2 },
+          { name: 'Mehak Gill', imageId: 3 },
+        ],
         services: [
-          { name: 'Haircut', description: 'Style Cut', price: 449, duration: 35 },
-          { name: 'Hair Color', description: 'Highlights', price: 3499, duration: 150 },
-          { name: 'Hair Spa', description: 'Head Spa', price: 899, duration: 45 },
+          { service_name: 'Haircut', description: 'Style cut tailored to face shape.', price: 449, duration: 35 },
+          { service_name: 'Hair Color', description: 'Partial or full highlights.', price: 3499, duration: 150 },
+          { service_name: 'Hair Spa', description: 'Nourishing hair spa treatment.', price: 899, duration: 45 },
+          { service_name: 'Hair Wash', description: 'Wash and blow-dry finish.', price: 199, duration: 20 },
         ],
       },
       {
         salon_name: 'Serenity Spa',
-        description: 'Relaxing spa and wellness treatments.',
+        description: 'Quiet spa and wellness treatments away from the city rush.',
         address: 'Sahibabad Railway Station Road',
         city: 'Ghaziabad',
         state: 'Uttar Pradesh',
@@ -86,11 +118,19 @@ const OWNERS = [
         longitude: 77.3505,
         opening_time: '08:00:00',
         closing_time: '20:00:00',
+        is_featured: false,
+        featured_sort_order: 0,
         imageIds: [10, 11, 12],
+        staff: [
+          { name: 'Lakshmi Iyer', imageId: 4 },
+          { name: 'Nisha Bhatia', imageId: 5 },
+          { name: 'Farah Siddiqui', imageId: 1 },
+        ],
         services: [
-          { name: 'Hair Spa', description: 'Aromatherapy Spa', price: 1999, duration: 90 },
-          { name: 'Body Massage', description: 'Swedish Massage', price: 1499, duration: 60 },
-          { name: 'Facial', description: 'Hydrating Facial', price: 999, duration: 50 },
+          { service_name: 'Hair Spa', description: 'Aromatherapy hair and scalp spa.', price: 1999, duration: 90 },
+          { service_name: 'Body Massage', description: 'Swedish full-body massage.', price: 1499, duration: 60 },
+          { service_name: 'Facial', description: 'Hydrating facial for dry skin.', price: 999, duration: 50 },
+          { service_name: 'Cleanup', description: 'Deep cleansing cleanup.', price: 699, duration: 40 },
         ],
       },
     ],
@@ -102,7 +142,7 @@ const OWNERS = [
     salons: [
       {
         salon_name: 'The Barber Lounge',
-        description: 'Classic barber shop with premium service.',
+        description: 'Classic barbershop with hot-towel finishes and kids cuts.',
         address: 'Mohan Nagar, Ram Nagar',
         city: 'Ghaziabad',
         state: 'Uttar Pradesh',
@@ -110,11 +150,19 @@ const OWNERS = [
         longitude: 77.3736,
         opening_time: '10:00:00',
         closing_time: '21:00:00',
+        is_featured: false,
+        featured_sort_order: 0,
         imageIds: [13, 14, 15],
+        staff: [
+          { name: 'Imran Ali', imageId: 2 },
+          { name: 'Suresh Yadav', imageId: 3 },
+          { name: 'Rajesh Kumar', imageId: 4 },
+        ],
         services: [
-          { name: 'Haircut', description: 'Classic Cut', price: 299, duration: 25 },
-          { name: 'Beard Trim', description: 'Hot Towel Shave', price: 249, duration: 30 },
-          { name: 'Haircut', description: 'Kids Cut', price: 199, duration: 20 },
+          { service_name: 'Classic Cut', description: 'Traditional scissors-and-comb cut.', price: 299, duration: 25 },
+          { service_name: 'Hot Towel Shave', description: 'Straight-razor shave with hot towel.', price: 249, duration: 30 },
+          { service_name: 'Kids Cut', description: 'Gentle haircut for children under 12.', price: 199, duration: 20 },
+          { service_name: 'Beard Trim', description: 'Beard trim with hot towel finish.', price: 179, duration: 20 },
         ],
       },
     ],
@@ -126,7 +174,7 @@ const OWNERS = [
     salons: [
       {
         salon_name: 'Bliss Salon',
-        description: 'Full-service salon for hair and skin.',
+        description: 'Full-service salon for hair, skin, and nail care in Sector 62.',
         address: 'Sector 62, Noida',
         city: 'Noida',
         state: 'Uttar Pradesh',
@@ -134,16 +182,24 @@ const OWNERS = [
         longitude: 77.3648,
         opening_time: '09:00:00',
         closing_time: '20:30:00',
+        is_featured: true,
+        featured_sort_order: 3,
         imageIds: [16, 17, 18],
+        staff: [
+          { name: 'Divya Krishnan', imageId: 5 },
+          { name: 'Shalini Bose', imageId: 1 },
+          { name: 'Kriti Agarwal', imageId: 2 },
+        ],
         services: [
-          { name: 'Facial', description: 'Anti-Ageing Facial', price: 1599, duration: 70 },
-          { name: 'Hair Styling', description: 'Blow Dry & Cut', price: 599, duration: 50 },
-          { name: 'Pedicure', description: 'Pedicure Spa', price: 799, duration: 45 },
+          { service_name: 'Facial', description: 'Anti-ageing facial with collagen mask.', price: 1599, duration: 70 },
+          { service_name: 'Hair Styling', description: 'Cut, blow-dry, and style.', price: 599, duration: 50 },
+          { service_name: 'Pedicure', description: 'Spa pedicure with scrub and polish.', price: 799, duration: 45 },
+          { service_name: 'Manicure', description: 'Classic manicure with cuticle care.', price: 499, duration: 35 },
         ],
       },
       {
         salon_name: 'Bridal Studio by Meera',
-        description: 'Bridal makeup and pre-wedding packages.',
+        description: 'Bridal makeup and pre-wedding packages with trial sessions.',
         address: 'Vasundhara Sector 15',
         city: 'Ghaziabad',
         state: 'Uttar Pradesh',
@@ -151,11 +207,20 @@ const OWNERS = [
         longitude: 77.3864,
         opening_time: '08:30:00',
         closing_time: '19:00:00',
+        is_featured: false,
+        featured_sort_order: 0,
         imageIds: [19, 20, 21],
+        staff: [
+          { name: 'Meera Iyer', imageId: 3 },
+          { name: 'Tanya Sharma', imageId: 4 },
+          { name: 'Ayesha Khan', imageId: 5 },
+          { name: 'Ishita Roy', imageId: 1 },
+        ],
         services: [
-          { name: 'Groom Package', description: 'Bridal Makeup', price: 8999, duration: 180 },
-          { name: 'Groom Package', description: 'Engagement Look', price: 4999, duration: 120 },
-          { name: 'Facial', description: 'Bridal Facial', price: 1999, duration: 75 },
+          { service_name: 'Bridal Makeup Package', description: 'Full bridal makeup with hair and draping.', price: 8999, duration: 180 },
+          { service_name: 'Engagement Look', description: 'Soft glam for engagement ceremonies.', price: 4999, duration: 120 },
+          { service_name: 'Facial', description: 'Bridal prep facial before the big day.', price: 1999, duration: 75 },
+          { service_name: 'Hair Styling', description: 'Bridal updo or open waves.', price: 2499, duration: 90 },
         ],
       },
     ],
@@ -167,18 +232,27 @@ const OWNERS = [
     salons: [
       {
         salon_name: 'Royal Grooming',
-        description: 'Luxury grooming experience for men.',
-        address: '11 Mall Road',
+        description: 'Luxury grooming for men on Mall Road — cuts, beard, and grey blending.',
+        address: '11 Mall Road, C-Scheme',
         city: 'Jaipur',
         state: 'Rajasthan',
+        latitude: 26.9124,
+        longitude: 75.7873,
         opening_time: '10:00:00',
         closing_time: '22:00:00',
+        is_featured: false,
+        featured_sort_order: 0,
         imageIds: [22, 23, 24, 25],
+        staff: [
+          { name: 'Arjun Singh', imageId: 2 },
+          { name: 'Manish Chauhan', imageId: 3 },
+          { name: 'Vivek Sharma', imageId: 4 },
+        ],
         services: [
-          { name: 'Haircut', description: 'Royal Cut', price: 499, duration: 40 },
-          { name: 'Beard Trim', description: 'Beard Trim & Shape', price: 299, duration: 25 },
-          { name: 'Head Massage', description: 'Head Massage', price: 399, duration: 20 },
-          { name: 'Hair Color', description: 'Grey Blending', price: 599, duration: 40 },
+          { service_name: 'Haircut', description: 'Royal signature cut with finish.', price: 499, duration: 40 },
+          { service_name: 'Beard Trim', description: 'Beard trim and shape.', price: 299, duration: 25 },
+          { service_name: 'Head Massage', description: 'Warm oil head massage.', price: 399, duration: 20 },
+          { service_name: 'Hair Color', description: 'Grey blending for a natural look.', price: 599, duration: 40 },
         ],
       },
     ],
@@ -190,31 +264,51 @@ const OWNERS = [
     salons: [
       {
         salon_name: 'Fresh Look Salon',
-        description: 'Affordable styling with quality products.',
-        address: '4 Marine Drive',
+        description: 'Affordable everyday styling with quality products on Marine Drive.',
+        address: '4 Marine Drive, Ernakulam',
         city: 'Kochi',
         state: 'Kerala',
+        latitude: 9.9816,
+        longitude: 76.2999,
         opening_time: '09:00:00',
         closing_time: '20:00:00',
+        is_featured: false,
+        featured_sort_order: 0,
         imageIds: [26, 27],
+        staff: [
+          { name: 'Kavya Nair', imageId: 5 },
+          { name: 'Anu Thomas', imageId: 1 },
+        ],
         services: [
-          { name: 'Haircut', description: 'Basic Cut', price: 249, duration: 25 },
-          { name: 'Facial', description: 'Fruit Facial', price: 699, duration: 45 },
+          { service_name: 'Haircut', description: 'Basic cut for men or women.', price: 249, duration: 25 },
+          { service_name: 'Facial', description: 'Fresh fruit facial.', price: 699, duration: 45 },
+          { service_name: 'Waxing', description: 'Arms or legs waxing.', price: 399, duration: 30 },
         ],
       },
       {
         salon_name: 'Zen Spa',
-        description: 'Calm spa retreat in the city.',
-        address: '2 Park Street',
+        description: 'Calm spa retreat on Park Street for massage and detox facials.',
+        address: '2 Park Street, near Maidan',
         city: 'Kolkata',
         state: 'West Bengal',
+        latitude: 22.5535,
+        longitude: 88.3516,
         opening_time: '08:00:00',
         closing_time: '21:00:00',
+        is_featured: false,
+        featured_sort_order: 0,
         imageIds: [28, 29, 30],
+        staff: [
+          { name: 'Priyanka Das', imageId: 2 },
+          { name: 'Sourav Banerjee', imageId: 3 },
+          { name: 'Rina Mukherjee', imageId: 4 },
+          { name: 'Amitava Sen', imageId: 5 },
+        ],
         services: [
-          { name: 'Body Massage', description: 'Full Body Spa', price: 2999, duration: 120 },
-          { name: 'Body Massage', description: 'Deep Tissue Massage', price: 1799, duration: 75 },
-          { name: 'Facial', description: 'Detox Facial', price: 1199, duration: 60 },
+          { service_name: 'Full Body Spa', description: '120-minute full body spa ritual.', price: 2999, duration: 120 },
+          { service_name: 'Deep Tissue Massage', description: 'Focused deep-tissue work.', price: 1799, duration: 75 },
+          { service_name: 'Facial', description: 'Detox facial for congested skin.', price: 1199, duration: 60 },
+          { service_name: 'Body Massage', description: 'Classic relaxation massage.', price: 1299, duration: 55 },
         ],
       },
     ],
@@ -235,27 +329,19 @@ async function getRoleId(queryInterface, roleName) {
   return role.id;
 }
 
-async function userExists(queryInterface, phone) {
-  const [row] = await queryInterface.sequelize.query(
-    `SELECT id FROM ${schema}.users WHERE phone = :phone LIMIT 1`,
-    { replacements: { phone }, type: queryInterface.sequelize.QueryTypes.SELECT }
-  );
-  return Boolean(row);
-}
-
 module.exports = {
   up: async (queryInterface) => {
     const now = new Date();
-    const urlMap = await prepareSeedSalonImages();
+    const salonUrlMap = await prepareSeedSalonImages();
+    const staffUrlMap = await prepareSeedStaffImages();
     const ownerRoleId = await getRoleId(queryInterface, 'SALON_OWNER');
     const customerRoleId = await getRoleId(queryInterface, 'CUSTOMER');
 
-    for (const owner of OWNERS) {
-      if (await userExists(queryInterface, owner.phone)) {
-        console.log(`Skipping seeded owner ${owner.phone} (already exists)`);
-        continue;
-      }
+    let salonCount = 0;
+    let staffCount = 0;
+    let serviceCount = 0;
 
+    for (const owner of OWNERS) {
       const userId = uuidv4();
       const ownerId = uuidv4();
 
@@ -290,7 +376,7 @@ module.exports = {
 
       for (const salon of owner.salons) {
         const salonId = uuidv4();
-        const gallery = imageUrls(urlMap, salon.imageIds);
+        const gallery = imageUrls(salonUrlMap, salon.imageIds);
 
         await queryInterface.bulkInsert({ schema, tableName: 'salons' }, [{
           id: salonId,
@@ -308,17 +394,38 @@ module.exports = {
           phone: owner.phone,
           opening_time: salon.opening_time,
           closing_time: salon.closing_time,
+          premium_booking_fee: null,
+          is_featured: Boolean(salon.is_featured),
+          featured_sort_order: salon.featured_sort_order ?? 0,
           status: 'ACTIVE',
           is_active: true,
           created_at: now,
           updated_at: now,
         }]);
+        salonCount += 1;
+
+        const staffRows = (salon.staff || []).map((member, index) => ({
+          id: uuidv4(),
+          salon_id: salonId,
+          name: member.name,
+          profile_image: staffImageUrl(staffUrlMap, member.imageId),
+          status: 'ACTIVE',
+          sort_order: index,
+          is_active: true,
+          created_at: now,
+          updated_at: now,
+        }));
+
+        if (staffRows.length > 0) {
+          await queryInterface.bulkInsert({ schema, tableName: 'salon_staff' }, staffRows);
+          staffCount += staffRows.length;
+        }
 
         for (const svc of salon.services) {
           await queryInterface.bulkInsert({ schema, tableName: 'services' }, [{
             id: uuidv4(),
             salon_id: salonId,
-            service_name: svc.name,
+            service_name: svc.service_name,
             description: svc.description || null,
             duration_minutes: svc.duration,
             price: svc.price,
@@ -328,42 +435,45 @@ module.exports = {
             created_at: now,
             updated_at: now,
           }]);
+          serviceCount += 1;
         }
       }
     }
 
-    if (!(await userExists(queryInterface, DEMO_CUSTOMER.phone))) {
-      const customerUserId = uuidv4();
-      await queryInterface.bulkInsert({ schema, tableName: 'users' }, [{
-        id: customerUserId,
-        name: DEMO_CUSTOMER.name,
-        phone: DEMO_CUSTOMER.phone,
-        email: null,
-        password: null,
-        status: 'ACTIVE',
-        is_active: true,
-        created_at: now,
-        updated_at: now,
-      }]);
+    const customerUserId = uuidv4();
+    await queryInterface.bulkInsert({ schema, tableName: 'users' }, [{
+      id: customerUserId,
+      name: DEMO_CUSTOMER.name,
+      phone: DEMO_CUSTOMER.phone,
+      email: null,
+      password: null,
+      status: 'ACTIVE',
+      is_active: true,
+      created_at: now,
+      updated_at: now,
+    }]);
 
-      await queryInterface.bulkInsert({ schema, tableName: 'user_roles' }, [{
-        user_id: customerUserId,
-        role_id: customerRoleId,
-        assigned_at: now,
-      }]);
+    await queryInterface.bulkInsert({ schema, tableName: 'user_roles' }, [{
+      user_id: customerUserId,
+      role_id: customerRoleId,
+      assigned_at: now,
+    }]);
 
-      await queryInterface.bulkInsert({ schema, tableName: 'customers' }, [{
-        id: uuidv4(),
-        user_id: customerUserId,
-        profile_image: null,
-        gender: null,
-        dob: null,
-        status: 'ACTIVE',
-        is_active: true,
-        created_at: now,
-        updated_at: now,
-      }]);
-    }
+    await queryInterface.bulkInsert({ schema, tableName: 'customers' }, [{
+      id: uuidv4(),
+      user_id: customerUserId,
+      profile_image: null,
+      gender: null,
+      dob: null,
+      status: 'ACTIVE',
+      is_active: true,
+      created_at: now,
+      updated_at: now,
+    }]);
+
+    console.log(
+      `Seeded ${OWNERS.length} owners, ${salonCount} salons, ${staffCount} staff, ${serviceCount} services, 1 demo customer`
+    );
   },
 
   down: async (queryInterface) => {

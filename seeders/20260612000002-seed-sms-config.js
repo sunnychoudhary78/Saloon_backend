@@ -19,7 +19,9 @@ module.exports = {
       enabled: false,
       auth_key: '',
       sender_id: '',
+      flow_id: '',
       template_id: '',
+      otp_var_name: 'OTP',
       message_template:
         'Your OTP for CATCHY is --. Valid for 5 minutes. Do not share this code.',
     };
@@ -33,7 +35,8 @@ module.exports = {
         replacements: {
           id,
           setting_value: JSON.stringify(settingValue),
-          description: 'SMS gateway configuration for customer OTP (MSG91)',
+          description:
+            'SMS gateway configuration for customer OTP via MSG91 Flow/OneAPI (DLT SMS templates)',
           now,
         },
       }

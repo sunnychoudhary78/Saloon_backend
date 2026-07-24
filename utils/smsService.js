@@ -1,23 +1,33 @@
 const axios = require('axios');
 const { PlatformSetting } = require('../models');
-const { OTP_EXPIRY_MINUTES, OTP_LENGTH } = require('./otpHelpers');
 const { normalizePhoneDigits } = require('./phoneUtils');
 
 const SMS_CONFIG_KEY = 'sms_config';
-// Delivery-only: backend generates/stores/verifies OTP; MSG91 verify/resend APIs are never called.
-const MSG91_OTP_URL = 'https://control.msg91.com/api/v5/otp';
+// Delivery-only via MSG91 Flow/OneAPI (matches DLT SMS templates / Test DLT).
+// Backend generates/stores/verifies OTP; MSG91 OTP verify/resend APIs are never called.
+// Use the MSG91 SMS Template / Flow ID here — NOT the DLT TE ID and NOT an OTP-section template ID.
+const MSG91_FLOW_URL = 'https://control.msg91.com/api/v5/flow';
 const MSG91_PROVIDER = 'msg91';
+const DEFAULT_OTP_VAR_NAME = 'OTP';
 
 const REQUIRED_FIELDS = [
   'provider',
   'auth_key',
   'sender_id',
-  'template_id',
+  'flow_id',
+  'otp_var_name',
   'message_template',
 ];
 
+function resolveFlowId(raw) {
+  return String(raw?.flow_id || raw?.template_id || raw?.sms_templateid || '').trim();
+}
+
 function normalizeLegacyConfig(raw) {
   if (!raw || typeof raw !== 'object') return null;
+
+  const flowId = resolveFlowId(raw);
+  const otpVarName = String(raw.otp_var_name || DEFAULT_OTP_VAR_NAME).trim() || DEFAULT_OTP_VAR_NAME;
 
   if (raw.provider === MSG91_PROVIDER) {
     return {
@@ -25,7 +35,10 @@ function normalizeLegacyConfig(raw) {
       enabled: raw.enabled !== false,
       auth_key: raw.auth_key || '',
       sender_id: raw.sender_id || '',
-      template_id: raw.template_id || '',
+      flow_id: flowId,
+      // Keep legacy key populated for callers that still read template_id
+      template_id: flowId,
+      otp_var_name: otpVarName,
       message_template: raw.message_template || '',
     };
   }
@@ -35,7 +48,9 @@ function normalizeLegacyConfig(raw) {
     enabled: raw.enabled !== false,
     auth_key: raw.auth_key || raw.sms_apikey || '',
     sender_id: raw.sender_id || raw.sms_sendername || '',
-    template_id: raw.template_id || raw.sms_templateid || '',
+    flow_id: flowId,
+    template_id: flowId,
+    otp_var_name: otpVarName,
     message_template: raw.message_template || raw.sms_message || '',
   };
 }
@@ -99,6 +114,25 @@ function parseMsg91Error(data) {
   return data.message || data.error || JSON.stringify(data);
 }
 
+function maskOtpForLog(otp) {
+  if (process.env.NODE_ENV !== 'production') return String(otp);
+  return '******';
+}
+
+function buildFlowBody(config, mobileIntl, otp) {
+  const varName = config.otp_var_name.trim();
+  return {
+    flow_id: config.flow_id.trim(),
+    sender: config.sender_id.trim(),
+    recipients: [
+      {
+        mobiles: mobileIntl,
+        [varName]: String(otp),
+      },
+    ],
+  };
+}
+
 async function sendOtpSms(mobile, otp) {
   const config = await loadSmsConfig();
   if (!config) {
@@ -108,40 +142,52 @@ async function sendOtpSms(mobile, otp) {
   validateConfig(config);
 
   const mobileIntl = formatMobileForMsg91(mobile);
+  const body = buildFlowBody(config, mobileIntl, otp);
+  const varName = config.otp_var_name.trim();
 
   if (process.env.NODE_ENV !== 'production') {
     const preview = buildMessage(config.message_template, otp);
-    console.log(`[OTP SMS] MSG91 preview for ${mobileIntl}: ${preview}`);
+    console.log(`[OTP SMS] MSG91 Flow preview for ${mobileIntl}: ${preview}`);
   }
 
+  const logBody = {
+    flow_id: body.flow_id,
+    sender: body.sender,
+    recipients: [
+      {
+        mobiles: mobileIntl,
+        [varName]: maskOtpForLog(otp),
+      },
+    ],
+  };
+
   console.log('[MSG91 REQUEST]', {
-    template_id: config.template_id,
-    mobile: mobileIntl,
-    otp: String(otp),
-    otp_expiry: OTP_EXPIRY_MINUTES,
-    otp_length: OTP_LENGTH,
+    url: MSG91_FLOW_URL,
+    body: logBody,
+    headers: { authkey: '[REDACTED]', 'Content-Type': 'application/json' },
   });
 
-  const response = await axios.post(
-    MSG91_OTP_URL,
-    {
-      template_id: config.template_id.trim(),
-      mobile: mobileIntl,
-      otp: String(otp),
-      otp_expiry: OTP_EXPIRY_MINUTES,
-      otp_length: OTP_LENGTH,
+  const response = await axios.post(MSG91_FLOW_URL, body, {
+    headers: {
+      authkey: config.auth_key.trim(),
+      'Content-Type': 'application/json',
     },
-    {
-      headers: {
-        authkey: config.auth_key.trim(),
-        'Content-Type': 'application/json',
-      },
-      timeout: 15000,
-    }
-  );
+    timeout: 15000,
+  });
 
   const data = response.data;
   const type = typeof data === 'object' && data ? data.type : null;
+  const requestId =
+    type === 'success' && typeof data?.message === 'string' ? data.message : null;
+
+  console.log('[MSG91 RESPONSE]', {
+    url: MSG91_FLOW_URL,
+    status: response.status,
+    body: data,
+    requestId,
+    deliveryNote:
+      'API success means accepted for processing. Check MSG91 SMS Logs with requestId for handset delivery / DLT status.',
+  });
 
   if (response.status < 200 || response.status >= 300) {
     throw new Error(`MSG91 SMS failed: ${parseMsg91Error(data)}`);
@@ -151,13 +197,10 @@ async function sendOtpSms(mobile, otp) {
     throw new Error(`MSG91 SMS failed: ${parseMsg91Error(data)}`);
   }
 
-  console.log('[MSG91 RESPONSE]', {
-    status: response.status,
-    data: response.data,
-  });
-
   if (process.env.NODE_ENV !== 'production') {
-    console.log(`[OTP SMS] MSG91 sent to ${mobileIntl}, status=${response.status}`);
+    console.log(
+      `[OTP SMS] MSG91 Flow sent to ${mobileIntl}, status=${response.status}, requestId=${requestId || 'n/a'}`
+    );
   }
 
   return data;
@@ -166,9 +209,12 @@ async function sendOtpSms(mobile, otp) {
 module.exports = {
   SMS_CONFIG_KEY,
   MSG91_PROVIDER,
+  MSG91_FLOW_URL,
+  DEFAULT_OTP_VAR_NAME,
   loadSmsConfig,
   sendOtpSms,
   buildMessage,
+  buildFlowBody,
   normalizeLegacyConfig,
   formatMobileForMsg91,
 };

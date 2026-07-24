@@ -20,15 +20,23 @@ async function main() {
   console.log('  enabled:', config?.enabled);
   console.log('  has auth_key:', Boolean(config?.auth_key));
   console.log('  sender_id:', config?.sender_id || '(empty)');
-  console.log('  template_id:', config?.template_id || '(empty)');
+  console.log('  flow_id:', config?.flow_id || '(empty)');
+  console.log('  otp_var_name:', config?.otp_var_name || '(empty)');
   console.log('  message has -- placeholder:', String(config?.message_template || '').includes('--'));
 
-  const required = ['provider', 'auth_key', 'sender_id', 'template_id', 'message_template'];
+  const required = [
+    'provider',
+    'auth_key',
+    'sender_id',
+    'flow_id',
+    'otp_var_name',
+    'message_template',
+  ];
   const missing = required.filter((f) => !String(config?.[f] || '').trim());
   if (config?.enabled && missing.length) {
     console.log('  WARNING: enabled but missing fields:', missing.join(', '));
   } else if (config?.enabled) {
-    console.log('  STATUS: ready to send OTP SMS via MSG91');
+    console.log('  STATUS: ready to send OTP SMS via MSG91 Flow/OneAPI');
   } else {
     console.log('  STATUS: disabled until admin enables in Platform Settings');
   }

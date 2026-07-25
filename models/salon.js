@@ -11,6 +11,11 @@ module.exports = (sequelize, DataTypes) => {
       owner_id: { type: DataTypes.UUID, allowNull: false },
       application_id: { type: DataTypes.UUID, allowNull: true, unique: true },
       salon_name: { type: DataTypes.STRING, allowNull: false },
+      salon_type: {
+        type: DataTypes.ENUM('MEN', 'WOMEN', 'UNISEX'),
+        allowNull: false,
+        defaultValue: 'UNISEX',
+      },
       description: { type: DataTypes.TEXT, allowNull: true },
       address: { type: DataTypes.TEXT, allowNull: false },
       formatted_address: { type: DataTypes.TEXT, allowNull: true },

@@ -4,7 +4,7 @@ const AppError = require('../middlewares/AppError');
 const { salonApplicationRegistryByKey } = require('../config/columnRegistry');
 const { approveApplication, rejectApplication } = require('../services/salonApplicationService');
 
-const defaultColumns = ['salon_name', 'application_type', 'city', 'state', 'application_status', 'owner_name', 'created_at'];
+const defaultColumns = ['salon_name', 'salon_type', 'application_type', 'city', 'state', 'application_status', 'owner_name', 'created_at'];
 
 exports.query = async (req, res, next) => {
   try {

@@ -4,7 +4,7 @@ const AppError = require('../middlewares/AppError');
 const { salonRegistryByKey } = require('../config/columnRegistry');
 const { logAudit } = require('../services/auditService');
 
-const defaultColumns = ['salon_name', 'city', 'state', 'status', 'is_featured', 'owner_name', 'created_at'];
+const defaultColumns = ['salon_name', 'salon_type', 'city', 'state', 'status', 'is_featured', 'owner_name', 'created_at'];
 const VALID_SALON_STATUSES = ['ACTIVE', 'SUSPENDED', 'CLOSED'];
 
 function isStatusNoOp(row, status) {

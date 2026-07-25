@@ -97,6 +97,7 @@ function shapeBrowseSalonDto(
   return {
     id: salonJson.id,
     salon_name: salonJson.salon_name,
+    salon_type: salonJson.salon_type || 'UNISEX',
     city: salonJson.city,
     address: salonJson.address,
     street: salonJson.address,

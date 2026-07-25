@@ -51,7 +51,7 @@ const {
   assertUniqueServiceIdentity,
   mapServiceIdentityConflict,
 } = require('../services/serviceIdentityService');
-const { SALON_SERVICE_NAMES } = require('../constants/salonServiceNames');
+const { serviceNamesForSalonType } = require('../constants/salonServiceNames');
 const {
   attachRatingSummary,
   getBatchSalonRatingSummaries,
@@ -474,7 +474,12 @@ exports.updateProfile = async (req, res, next) => {
     if (customer) {
       const { profile_image, gender, dob } = req.body;
       if (profile_image !== undefined) customer.profile_image = profile_image;
-      if (gender !== undefined) customer.gender = gender;
+      if (gender !== undefined) {
+        if (gender !== null && gender !== '' && gender !== 'male' && gender !== 'female') {
+          throw new AppError('gender must be male or female', 400);
+        }
+        customer.gender = gender === '' ? null : gender;
+      }
       if (dob !== undefined) customer.dob = dob;
       customer.updated_by = req.user.id;
       await customer.save();
@@ -647,6 +652,12 @@ exports.browseSalons = async (req, res, next) => {
 
     if (req.query.city) where.city = { [Op.iLike]: `%${req.query.city}%` };
     if (featuredOnly) where.is_featured = true;
+    const audience = String(req.query.audience || '').trim().toLowerCase();
+    if (audience === 'men') {
+      where.salon_type = { [Op.in]: ['MEN', 'UNISEX'] };
+    } else if (audience === 'women') {
+      where.salon_type = { [Op.in]: ['WOMEN', 'UNISEX'] };
+    }
     if (req.query.search) {
       where[Op.or] = [
         { salon_name: { [Op.iLike]: `%${req.query.search}%` } },
@@ -690,6 +701,7 @@ exports.browseSalons = async (req, res, next) => {
     const baseAttributes = [
       'id',
       'salon_name',
+      'salon_type',
       'city',
       'address',
       'cover_image',
@@ -1472,7 +1484,11 @@ exports.getOwnerSalons = async (req, res, next) => {
 
 exports.getServiceNames = async (req, res, next) => {
   try {
-    res.json({ data: SALON_SERVICE_NAMES });
+    const salonType = String(req.query.salon_type || 'UNISEX').toUpperCase();
+    if (!['MEN', 'WOMEN', 'UNISEX'].includes(salonType)) {
+      throw new AppError('salon_type must be MEN, WOMEN, or UNISEX', 400);
+    }
+    res.json({ data: serviceNamesForSalonType(salonType) });
   } catch (err) {
     next(err);
   }

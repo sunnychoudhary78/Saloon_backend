@@ -160,7 +160,7 @@ exports.completeProfile = async (req, res, next) => {
     }
 
     const phone = decoded.phone;
-    const { name, email } = req.body;
+    const { name, email, gender } = req.body;
     const normalizedEmail = email && String(email).trim() ? String(email).trim().toLowerCase() : null;
 
     const existingPhone = await User.findOne({ where: { phone }, transaction: t });
@@ -188,7 +188,10 @@ exports.completeProfile = async (req, res, next) => {
     );
 
     await assignCustomerRole(user.id, t);
-    await Customer.create({ user_id: user.id, status: 'ACTIVE' }, { transaction: t });
+    await Customer.create(
+      { user_id: user.id, gender, status: 'ACTIVE' },
+      { transaction: t }
+    );
 
     await t.commit();
 

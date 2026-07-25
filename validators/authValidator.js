@@ -69,6 +69,11 @@ const salonApplicationSchema = Joi.object({
     then: Joi.string().allow(null, '').optional(),
     otherwise: Joi.string().required(),
   }),
+  salon_type: Joi.when('application_type', {
+    is: statusChangeTypes,
+    then: Joi.string().valid('MEN', 'WOMEN', 'UNISEX').optional(),
+    otherwise: Joi.string().valid('MEN', 'WOMEN', 'UNISEX').required(),
+  }),
   description: Joi.string().allow(null, '').optional(),
   address: Joi.string().allow(null, '').optional(),
   street: Joi.string().allow(null, '').optional(),

@@ -35,6 +35,7 @@ function imageFieldsFromApplication(application, existingSalon = null) {
 
 const salonFieldsFromApplication = (application, coordsOverride = null, existingSalon = null) => ({
   salon_name: application.salon_name,
+  salon_type: application.salon_type || existingSalon?.salon_type || 'UNISEX',
   description: application.description,
   address: application.address,
   formatted_address: application.formatted_address ?? existingSalon?.formatted_address ?? null,

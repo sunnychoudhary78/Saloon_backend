@@ -30,6 +30,12 @@ const salonApplicationRegistry = [
     path: "salon_name",
     type: "string",
   },
+  {
+    key: "salon_type",
+    label: "Salon Type",
+    path: "salon_type",
+    type: "string",
+  },
   { key: "phone", label: "Phone", path: "phone", type: "string" },
   {
     key: "application_type",
@@ -62,6 +68,12 @@ const salonRegistry = [
     key: "salon_name",
     label: "Salon Name",
     path: "salon_name",
+    type: "string",
+  },
+  {
+    key: "salon_type",
+    label: "Salon Type",
+    path: "salon_type",
     type: "string",
   },
   { key: "phone", label: "Phone", path: "phone", type: "string" },

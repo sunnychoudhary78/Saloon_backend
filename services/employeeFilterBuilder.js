@@ -212,17 +212,23 @@ function mergeWhereParts(parts) {
 }
 
 // public entry: accepts payload with search, columnFilters, advancedFilters
-function buildWhereFromFilters(payload) {
+// optional contextRegistry: salon coupon/banner registries (falls back to global registryByKey)
+function buildWhereFromFilters(payload, contextRegistry) {
     const whereParts = [];
     const includeConds = [];
+    const getReg = (key) =>
+        (contextRegistry && contextRegistry[key]) || registryByKey[key];
 
     // global search => same as before but ensure you add to whereParts (top-level)
     if (payload && payload.search) {
         const term = String(payload.search).trim();
         if (term.length > 0) {
-            const searchCols = ['associates_name', 'payroll_code', 'designation', 'associates_name', 'email'];
+            const searchCols =
+                Array.isArray(payload.searchCols) && payload.searchCols.length > 0
+                    ? payload.searchCols
+                    : ['associates_name', 'payroll_code', 'designation', 'email'];
             const orParts = searchCols.map(k => {
-                const reg = registryByKey[k];
+                const reg = getReg(k);
                 if (!reg) return null;
                 // if reg.path references included model, prefer pushing into includeConds
                 const segments = String(reg.path).split('.');
@@ -233,8 +239,8 @@ function buildWhereFromFilters(payload) {
                     includeConds.push({ pathSegments: segments, condition: condObj });
                     return null;
                 } else {
-                    // top-level employee/user column
-                    return sequelizeWhere(col(reg.path), { [Op.iLike]: `%${escapeLike(term)}%` });
+                    // top-level column — use plain attribute key for Op.or compatibility
+                    return { [reg.path]: { [Op.iLike]: `%${escapeLike(term)}%` } };
                 }
             }).filter(Boolean);
             if (orParts.length) whereParts.push({ [Op.or]: orParts });

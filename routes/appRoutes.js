@@ -50,6 +50,18 @@ router.post('/auth/complete-profile', validateCompleteProfile, asyncHandler(appA
 router.get('/profile', authMiddleware, asyncHandler(ctrl.getProfile));
 router.patch('/profile', authMiddleware, asyncHandler(ctrl.updateProfile));
 router.post(
+  '/profile/phone/otp-request',
+  authMiddleware,
+  validateOtpRequest,
+  asyncHandler(ctrl.requestPhoneChangeOtp),
+);
+router.post(
+  '/profile/phone/otp-verify',
+  authMiddleware,
+  validateOtpVerify,
+  asyncHandler(ctrl.verifyPhoneChangeOtp),
+);
+router.post(
   '/uploads/profile-image',
   authMiddleware,
   uploadProfileImage.single('image'),

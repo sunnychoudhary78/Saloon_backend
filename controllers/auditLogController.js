@@ -1,6 +1,6 @@
-const { Op } = require('sequelize');
 const { AuditLog, User } = require('../models');
 const { auditLogRegistryByKey } = require('../config/columnRegistry');
+const { ilikeOr } = require('../utils/adminSearch');
 
 const defaultColumns = ['action', 'entity_type', 'user_name', 'created_at'];
 
@@ -12,12 +12,11 @@ exports.query = async (req, res, next) => {
     const where = {};
 
     if (req.body.entity_type) where.entity_type = req.body.entity_type;
-    if (req.body.search) {
-      where[Op.or] = [
-        { action: { [Op.iLike]: `%${req.body.search}%` } },
-        { entity_type: { [Op.iLike]: `%${req.body.search}%` } },
-      ];
-    }
+    const searchOr = ilikeOr(
+      ['action', 'entity_type', '$user.name$'],
+      req.body.search,
+    );
+    if (searchOr) Object.assign(where, searchOr);
 
     const { count, rows } = await AuditLog.findAndCountAll({
       where,
@@ -25,6 +24,8 @@ exports.query = async (req, res, next) => {
       order: [['created_at', 'DESC']],
       limit,
       offset,
+      distinct: true,
+      subQuery: false,
     });
 
     const shaped = rows.map((r) => {

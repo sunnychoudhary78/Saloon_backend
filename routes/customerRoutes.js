@@ -8,5 +8,6 @@ const ctrl = require('../controllers/customerController');
 router.post('/query', authMiddleware, permissionMiddleware('customer.read'), asyncHandler(ctrl.query));
 router.get('/:id', authMiddleware, permissionMiddleware('customer.read'), asyncHandler(ctrl.getById));
 router.patch('/:id/block', authMiddleware, permissionMiddleware('customer.block'), asyncHandler(ctrl.block));
+router.patch('/:id/unblock', authMiddleware, permissionMiddleware('customer.block'), asyncHandler(ctrl.unblock));
 
 module.exports = router;

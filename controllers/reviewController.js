@@ -1,8 +1,8 @@
-const { Op } = require('sequelize');
 const { Review, Customer, Salon, User, Booking } = require('../models');
 const AppError = require('../middlewares/AppError');
 const { reviewRegistryByKey } = require('../config/columnRegistry');
 const { logAudit } = require('../services/auditService');
+const { ilikeOr } = require('../utils/adminSearch');
 
 const defaultColumns = ['salon_name', 'customer_name', 'rating', 'review', 'status', 'created_at'];
 
@@ -13,6 +13,11 @@ exports.query = async (req, res, next) => {
     const offset = (page - 1) * limit;
     const where = {};
     if (req.body.status) where.status = req.body.status;
+    const searchOr = ilikeOr(
+      ['review', '$salon.salon_name$', '$customer.user.name$'],
+      req.body.search,
+    );
+    if (searchOr) Object.assign(where, searchOr);
 
     const { count, rows } = await Review.findAndCountAll({
       where,
@@ -23,6 +28,8 @@ exports.query = async (req, res, next) => {
       order: [['created_at', 'DESC']],
       limit,
       offset,
+      distinct: true,
+      subQuery: false,
     });
 
     const shaped = rows.map((r) => {

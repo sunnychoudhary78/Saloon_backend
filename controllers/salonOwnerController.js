@@ -1,9 +1,8 @@
-const { Op } = require('sequelize');
 const { SalonOwner, User } = require('../models');
 const AppError = require('../middlewares/AppError');
-const { genericQuery } = require('../services/genericQueryService');
 const { salonOwnerRegistryByKey } = require('../config/columnRegistry');
 const { logAudit } = require('../services/auditService');
+const { ilikeOr } = require('../utils/adminSearch');
 
 const defaultColumns = ['business_name', 'gst_number', 'status', 'owner_name', 'owner_email', 'created_at'];
 
@@ -12,15 +11,19 @@ exports.query = async (req, res, next) => {
     const page = Math.max(parseInt(req.body.page, 10) || 1, 1);
     const limit = Math.max(parseInt(req.body.limit, 10) || 20, 1);
     const offset = (page - 1) * limit;
-    const search = req.body.search || '';
 
     const where = {};
-    if (search) {
-      where[Op.or] = [
-        { business_name: { [Op.iLike]: `%${search}%` } },
-        { gst_number: { [Op.iLike]: `%${search}%` } },
-      ];
-    }
+    const searchOr = ilikeOr(
+      [
+        'business_name',
+        'gst_number',
+        '$user.name$',
+        '$user.email$',
+        '$user.phone$',
+      ],
+      req.body.search,
+    );
+    if (searchOr) Object.assign(where, searchOr);
 
     const { count, rows } = await SalonOwner.findAndCountAll({
       where,
@@ -28,6 +31,8 @@ exports.query = async (req, res, next) => {
       order: [['created_at', 'DESC']],
       limit,
       offset,
+      distinct: true,
+      subQuery: false,
     });
 
     const shaped = rows.map((r) => {

@@ -1,7 +1,7 @@
-const { Op } = require('sequelize');
 const { Customer, User } = require('../models');
 const AppError = require('../middlewares/AppError');
 const { customerRegistryByKey } = require('../config/columnRegistry');
+const { ilikeOr } = require('../utils/adminSearch');
 
 const defaultColumns = ['customer_name', 'email', 'phone', 'gender', 'status', 'created_at'];
 
@@ -13,14 +13,11 @@ exports.query = async (req, res, next) => {
     const where = {};
     if (req.body.status) where.status = req.body.status;
 
-    const userWhere = {};
-    if (req.body.search) {
-      userWhere[Op.or] = [
-        { name: { [Op.iLike]: `%${req.body.search}%` } },
-        { email: { [Op.iLike]: `%${req.body.search}%` } },
-        { phone: { [Op.iLike]: `%${req.body.search}%` } },
-      ];
-    }
+    const searchOr = ilikeOr(
+      ['gender', '$user.name$', '$user.email$', '$user.phone$'],
+      req.body.search,
+    );
+    if (searchOr) Object.assign(where, searchOr);
 
     const { count, rows } = await Customer.findAndCountAll({
       where,
@@ -28,11 +25,12 @@ exports.query = async (req, res, next) => {
         model: User,
         as: 'user',
         attributes: ['id', 'name', 'email', 'phone'],
-        where: Object.keys(userWhere).length ? userWhere : undefined,
       }],
       order: [['created_at', 'DESC']],
       limit,
       offset,
+      distinct: true,
+      subQuery: false,
     });
 
     const shaped = rows.map((r) => {
@@ -81,6 +79,24 @@ exports.block = async (req, res, next) => {
     if (row.user) {
       row.user.status = 'BLOCKED';
       row.user.is_active = false;
+      await row.user.save();
+    }
+    res.json({ data: row });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.unblock = async (req, res, next) => {
+  try {
+    const row = await Customer.findByPk(req.params.id, { include: [{ model: User, as: 'user' }] });
+    if (!row) throw new AppError('Customer not found', 404);
+    row.status = 'ACTIVE';
+    row.updated_by = req.user.id;
+    await row.save();
+    if (row.user) {
+      row.user.status = 'ACTIVE';
+      row.user.is_active = true;
       await row.user.save();
     }
     res.json({ data: row });

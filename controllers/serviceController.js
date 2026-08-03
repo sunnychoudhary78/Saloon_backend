@@ -1,4 +1,3 @@
-const { Op } = require('sequelize');
 const { Service, Salon } = require('../models');
 const AppError = require('../middlewares/AppError');
 const { serviceRegistryByKey } = require('../config/columnRegistry');
@@ -6,6 +5,7 @@ const {
   assertUniqueServiceIdentity,
   mapServiceIdentityConflict,
 } = require('../services/serviceIdentityService');
+const { ilikeOr } = require('../utils/adminSearch');
 
 const defaultColumns = ['service_name', 'salon_name', 'description', 'price', 'duration_minutes', 'status'];
 
@@ -17,9 +17,11 @@ exports.query = async (req, res, next) => {
     const where = {};
 
     if (req.body.salon_id) where.salon_id = req.body.salon_id;
-    if (req.body.search) {
-      where.service_name = { [Op.iLike]: `%${req.body.search}%` };
-    }
+    const searchOr = ilikeOr(
+      ['service_name', 'description', '$salon.salon_name$'],
+      req.body.search,
+    );
+    if (searchOr) Object.assign(where, searchOr);
 
     const { count, rows } = await Service.findAndCountAll({
       where,
@@ -27,6 +29,8 @@ exports.query = async (req, res, next) => {
       order: [['created_at', 'DESC']],
       limit,
       offset,
+      distinct: true,
+      subQuery: false,
     });
 
     const shaped = rows.map((r) => {

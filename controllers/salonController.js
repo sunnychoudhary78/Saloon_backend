@@ -1,8 +1,8 @@
-const { Op } = require('sequelize');
 const { Salon, SalonOwner, User } = require('../models');
 const AppError = require('../middlewares/AppError');
 const { salonRegistryByKey } = require('../config/columnRegistry');
 const { logAudit } = require('../services/auditService');
+const { ilikeOr } = require('../utils/adminSearch');
 
 const defaultColumns = ['salon_name', 'salon_type', 'city', 'state', 'status', 'is_featured', 'owner_name', 'created_at'];
 const VALID_SALON_STATUSES = ['ACTIVE', 'SUSPENDED', 'CLOSED'];
@@ -25,12 +25,17 @@ exports.query = async (req, res, next) => {
     if (req.body.is_featured !== undefined) {
       where.is_featured = req.body.is_featured === true || req.body.is_featured === 'true';
     }
-    if (req.body.search) {
-      where[Op.or] = [
-        { salon_name: { [Op.iLike]: `%${req.body.search}%` } },
-        { city: { [Op.iLike]: `%${req.body.search}%` } },
-      ];
-    }
+    const searchOr = ilikeOr(
+      [
+        'salon_name',
+        'city',
+        'state',
+        'salon_type',
+        '$owner.user.name$',
+      ],
+      req.body.search,
+    );
+    if (searchOr) Object.assign(where, searchOr);
 
     const { count, rows } = await Salon.findAndCountAll({
       where,
@@ -42,6 +47,8 @@ exports.query = async (req, res, next) => {
       order: [['created_at', 'DESC']],
       limit,
       offset,
+      distinct: true,
+      subQuery: false,
     });
 
     const shaped = rows.map((r) => {

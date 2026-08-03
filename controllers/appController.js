@@ -19,11 +19,22 @@ const {
   PaymentLineItem,
   SalonPayoutAccount,
   SettlementLedger,
+  PhoneOtpSession,
   sequelize,
 } = require('../models');
 const AppError = require('../middlewares/AppError');
 const { generateToken, loadUserWithRoles, shapeUserResponse, getRoleNames } = require('../utils/authHelpers');
-const { normalizePhoneDigits } = require('../utils/phoneUtils');
+const {
+  normalizePhone,
+  generateOtp,
+  getOtpExpiryDate,
+  isOtpExpired,
+  checkRequestCooldown,
+  markOtpRequested,
+  sanitizeOtpDeliveryError,
+  MAX_VERIFY_ATTEMPTS,
+} = require('../utils/otpHelpers');
+const { sendOtpSms } = require('../utils/smsService');
 const { getSalonOwnerForUser, assertSalonOwnership } = require('../utils/ownershipGuard');
 const { generateBookingNumber, canTransition } = require('../services/bookingService');
 const {
@@ -359,9 +370,11 @@ function buildOwnerStaffPayload(body, existing = null) {
 }
 
 function snapshotSalonForApplication(salon, payload) {
+  const gallery = Array.isArray(salon.gallery_images) ? salon.gallery_images : [];
   return {
     ...payload,
     salon_name: salon.salon_name,
+    salon_type: salon.salon_type || 'UNISEX',
     address: salon.address,
     formatted_address: salon.formatted_address ?? null,
     locality: salon.locality ?? null,
@@ -370,7 +383,14 @@ function snapshotSalonForApplication(salon, payload) {
     postal_code: salon.postal_code ?? null,
     latitude: salon.latitude,
     longitude: salon.longitude,
-    description: payload.description || null,
+    cover_image: salon.cover_image ?? null,
+    gallery_images: gallery,
+    phone: salon.phone,
+    opening_time: salon.opening_time,
+    closing_time: salon.closing_time,
+    premium_booking_fee: salon.premium_booking_fee ?? null,
+    // Keep optional request reason when provided; otherwise retain salon description.
+    description: payload.description || salon.description || null,
   };
 }
 
@@ -442,19 +462,9 @@ exports.getProfile = async (req, res, next) => {
 exports.updateProfile = async (req, res, next) => {
   try {
     const user = await User.findByPk(req.user.id);
-    const { name, phone, email } = req.body;
+    const { name, email } = req.body;
     if (name) user.name = name;
-    if (phone !== undefined) {
-      if (phone === null || phone === '') {
-        user.phone = null;
-      } else {
-        const normalizedPhone = normalizePhoneDigits(phone);
-        if (!normalizedPhone) {
-          throw new AppError('Phone must be exactly 10 digits', 400);
-        }
-        user.phone = normalizedPhone;
-      }
-    }
+    // Phone changes require OTP verification via /profile/phone/otp-*.
     if (email !== undefined) {
       const normalizedEmail = email && String(email).trim()
         ? String(email).trim().toLowerCase()
@@ -487,6 +497,121 @@ exports.updateProfile = async (req, res, next) => {
 
     const fullUser = await loadUserWithRoles(user.id);
     const { salon_owner, salon_application } = await loadSalonOwnerContext(user.id);
+    res.json({
+      user: shapeUserResponse(fullUser),
+      customer,
+      salon_owner,
+      salon_application,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.requestPhoneChangeOtp = async (req, res, next) => {
+  try {
+    const phone = normalizePhone(req.body.phone);
+    if (!phone) throw new AppError('Invalid phone number. Enter exactly 10 digits.', 400);
+
+    const user = await User.findByPk(req.user.id);
+    if (!user) throw new AppError('User not found', 404);
+
+    if (user.phone && normalizePhone(user.phone) === phone) {
+      throw new AppError('This is already your current phone number', 400);
+    }
+
+    const taken = await User.findOne({
+      where: { phone, id: { [Op.ne]: user.id } },
+    });
+    if (taken) throw new AppError('This phone number is already registered', 409);
+
+    const cooldown = checkRequestCooldown(phone);
+    if (!cooldown.allowed) {
+      throw new AppError(`Please wait ${cooldown.waitSec} seconds before requesting another OTP`, 429);
+    }
+
+    const otp = generateOtp();
+    const otpExpiresAt = getOtpExpiryDate();
+
+    await PhoneOtpSession.upsert(
+      {
+        phone,
+        otp,
+        otp_expires_at: otpExpiresAt,
+        attempt_count: 0,
+        updated_at: new Date(),
+      },
+      { returning: true }
+    );
+
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`[OTP phone-change] user=${user.id} phone=${phone} otp=${otp}`);
+    }
+
+    try {
+      await sendOtpSms(phone, otp);
+    } catch (smsErr) {
+      await PhoneOtpSession.destroy({ where: { phone } });
+      throw new AppError(sanitizeOtpDeliveryError(smsErr), 500);
+    }
+
+    markOtpRequested(phone);
+    res.json({ message: 'OTP sent successfully' });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.verifyPhoneChangeOtp = async (req, res, next) => {
+  try {
+    const phone = normalizePhone(req.body.phone);
+    const { otp } = req.body;
+    if (!phone) throw new AppError('Invalid phone number', 400);
+
+    const user = await User.findByPk(req.user.id);
+    if (!user) throw new AppError('User not found', 404);
+
+    if (user.phone && normalizePhone(user.phone) === phone) {
+      throw new AppError('This is already your current phone number', 400);
+    }
+
+    const session = await PhoneOtpSession.findOne({ where: { phone } });
+    if (!session) throw new AppError('OTP expired or not found. Please request a new OTP.', 400);
+
+    if (session.attempt_count >= MAX_VERIFY_ATTEMPTS) {
+      await PhoneOtpSession.destroy({ where: { phone } });
+      throw new AppError('Too many failed attempts. Please request a new OTP.', 429);
+    }
+
+    if (isOtpExpired(session.otp_expires_at)) {
+      await PhoneOtpSession.destroy({ where: { phone } });
+      throw new AppError('OTP has expired. Please request a new OTP.', 400);
+    }
+
+    if (String(session.otp) !== String(otp)) {
+      session.attempt_count += 1;
+      await session.save();
+      throw new AppError('Invalid OTP', 400);
+    }
+
+    const taken = await User.findOne({
+      where: { phone, id: { [Op.ne]: user.id } },
+    });
+    if (taken) {
+      await PhoneOtpSession.destroy({ where: { phone } });
+      throw new AppError('This phone number is already registered', 409);
+    }
+
+    await PhoneOtpSession.destroy({ where: { phone } });
+
+    user.phone = phone;
+    user.updated_by = req.user.id;
+    await user.save();
+
+    const fullUser = await loadUserWithRoles(user.id);
+    const customer = await Customer.findOne({ where: { user_id: user.id } });
+    const { salon_owner, salon_application } = await loadSalonOwnerContext(user.id);
+
     res.json({
       user: shapeUserResponse(fullUser),
       customer,

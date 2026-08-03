@@ -1,8 +1,8 @@
-const { Op } = require('sequelize');
 const { SalonApplication, SalonOwner, User } = require('../models');
 const AppError = require('../middlewares/AppError');
 const { salonApplicationRegistryByKey } = require('../config/columnRegistry');
 const { approveApplication, rejectApplication } = require('../services/salonApplicationService');
+const { ilikeOr } = require('../utils/adminSearch');
 
 const defaultColumns = ['salon_name', 'salon_type', 'application_type', 'city', 'state', 'application_status', 'owner_name', 'created_at'];
 
@@ -15,12 +15,18 @@ exports.query = async (req, res, next) => {
 
     if (req.body.application_status) where.application_status = req.body.application_status;
     if (req.body.application_type) where.application_type = req.body.application_type;
-    if (req.body.search) {
-      where[Op.or] = [
-        { salon_name: { [Op.iLike]: `%${req.body.search}%` } },
-        { city: { [Op.iLike]: `%${req.body.search}%` } },
-      ];
-    }
+    const searchOr = ilikeOr(
+      [
+        'salon_name',
+        'city',
+        'state',
+        'salon_type',
+        'application_type',
+        '$owner.user.name$',
+      ],
+      req.body.search,
+    );
+    if (searchOr) Object.assign(where, searchOr);
 
     const { count, rows } = await SalonApplication.findAndCountAll({
       where,
@@ -32,6 +38,8 @@ exports.query = async (req, res, next) => {
       order: [['created_at', 'DESC']],
       limit,
       offset,
+      distinct: true,
+      subQuery: false,
     });
 
     const shaped = rows.map((r) => {

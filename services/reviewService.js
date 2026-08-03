@@ -5,11 +5,47 @@ const REVIEWABLE_STATUSES = ['ACCEPTED', 'COMPLETED'];
 const DEFAULT_SLOT_DURATION_MINUTES = 60;
 
 function parseTimeParts(timeValue) {
-  if (!timeValue) return { hours: 0, minutes: 0 };
-  const raw = String(timeValue);
-  const match = raw.match(/(\d{1,2}):(\d{2})/);
+  if (timeValue == null || timeValue === '') return { hours: 0, minutes: 0 };
+
+  if (timeValue instanceof Date && !Number.isNaN(timeValue.getTime())) {
+    return { hours: timeValue.getHours(), minutes: timeValue.getMinutes() };
+  }
+
+  const raw = String(timeValue).trim();
+  // Prefer HH:MM from ISO-ish strings (e.g. 1970-01-01T10:30:00) over date fragments.
+  const isoTime = raw.match(/T(\d{1,2}):(\d{2})/);
+  if (isoTime) {
+    return { hours: parseInt(isoTime[1], 10), minutes: parseInt(isoTime[2], 10) };
+  }
+  const match = raw.match(/^(\d{1,2}):(\d{2})/);
   if (!match) return { hours: 0, minutes: 0 };
   return { hours: parseInt(match[1], 10), minutes: parseInt(match[2], 10) };
+}
+
+/** Normalize DATEONLY / Date / ISO strings to YYYY-MM-DD. */
+function normalizeBookingDate(dateValue) {
+  if (dateValue == null || dateValue === '') return '';
+
+  if (dateValue instanceof Date && !Number.isNaN(dateValue.getTime())) {
+    const y = dateValue.getFullYear();
+    const m = String(dateValue.getMonth() + 1).padStart(2, '0');
+    const d = String(dateValue.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
+  const raw = String(dateValue).trim();
+  const isoDate = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (isoDate) return isoDate[1];
+
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) {
+    const y = parsed.getFullYear();
+    const m = String(parsed.getMonth() + 1).padStart(2, '0');
+    const d = String(parsed.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
+  return '';
 }
 
 function getServiceDurationMinutes(service) {
@@ -19,24 +55,31 @@ function getServiceDurationMinutes(service) {
 }
 
 function getSlotEndDateTime(booking, service) {
-  const dateStr = String(booking.booking_date || booking.bookingDate || '').slice(0, 10);
+  const dateStr = normalizeBookingDate(booking.booking_date || booking.bookingDate);
   const { hours, minutes } = parseTimeParts(booking.booking_time || booking.bookingTime);
   const durationMinutes = getServiceDurationMinutes(service);
+  if (!dateStr) return new Date(NaN);
   const end = new Date(`${dateStr}T00:00:00`);
+  if (Number.isNaN(end.getTime())) return end;
   end.setHours(hours, minutes, 0, 0);
   end.setMinutes(end.getMinutes() + durationMinutes);
   return end;
 }
 
 function hasSlotEnded(booking, service, now = new Date()) {
-  return now >= getSlotEndDateTime(booking, service);
+  const end = getSlotEndDateTime(booking, service);
+  if (Number.isNaN(end.getTime())) return false;
+  return now >= end;
 }
 
 function isBookingReviewable(booking, service, existingReview) {
-  if (!booking || !REVIEWABLE_STATUSES.includes(booking.booking_status)) {
+  const status = booking?.booking_status || booking?.bookingStatus;
+  if (!booking || !REVIEWABLE_STATUSES.includes(status)) {
     return false;
   }
   if (existingReview) return false;
+  // COMPLETED means the visit is done — allow review without slot-end math.
+  if (status === 'COMPLETED') return true;
   return hasSlotEnded(booking, service);
 }
 
@@ -227,6 +270,8 @@ function shapeBookingReviewFlags(booking, service, review) {
 module.exports = {
   REVIEWABLE_STATUSES,
   DEFAULT_SLOT_DURATION_MINUTES,
+  normalizeBookingDate,
+  parseTimeParts,
   getSlotEndDateTime,
   hasSlotEnded,
   isBookingReviewable,

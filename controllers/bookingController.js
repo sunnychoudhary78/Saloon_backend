@@ -1,9 +1,9 @@
-const { Op } = require('sequelize');
 const { Booking, Customer, Salon, Service, User, sequelize } = require('../models');
 const AppError = require('../middlewares/AppError');
 const { bookingRegistryByKey } = require('../config/columnRegistry');
 const { canTransition } = require('../services/bookingService');
 const { logAudit } = require('../services/auditService');
+const { ilikeOr } = require('../utils/adminSearch');
 const {
   notifyBookingConfirmed,
   notifyBookingRejected,
@@ -43,7 +43,16 @@ exports.query = async (req, res, next) => {
 
     if (req.body.booking_status) where.booking_status = req.body.booking_status;
     if (req.body.salon_id) where.salon_id = req.body.salon_id;
-    if (req.body.search) where.booking_number = { [Op.iLike]: `%${req.body.search}%` };
+    const searchOr = ilikeOr(
+      [
+        'booking_number',
+        '$customer.user.name$',
+        '$salon.salon_name$',
+        '$service.service_name$',
+      ],
+      req.body.search,
+    );
+    if (searchOr) Object.assign(where, searchOr);
 
     const { count, rows } = await Booking.findAndCountAll({
       where,
@@ -55,6 +64,8 @@ exports.query = async (req, res, next) => {
       order: [['created_at', 'DESC']],
       limit,
       offset,
+      distinct: true,
+      subQuery: false,
     });
 
     const shaped = rows.map((r) => {

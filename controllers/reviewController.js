@@ -4,7 +4,7 @@ const { reviewRegistryByKey } = require('../config/columnRegistry');
 const { logAudit } = require('../services/auditService');
 const { ilikeOr } = require('../utils/adminSearch');
 
-const defaultColumns = ['salon_name', 'customer_name', 'rating', 'review', 'status', 'created_at'];
+const defaultColumns = ['salon_name', 'customer_name', 'rating', 'staff_rating', 'review', 'status', 'created_at'];
 
 exports.query = async (req, res, next) => {
   try {
@@ -60,6 +60,7 @@ exports.publish = async (req, res, next) => {
     const row = await Review.findByPk(req.params.id);
     if (!row) throw new AppError('Review not found', 404);
     row.status = 'PUBLISHED';
+    row.is_active = true;
     row.moderated_by = req.user.id;
     row.updated_by = req.user.id;
     await row.save();
@@ -75,6 +76,7 @@ exports.hide = async (req, res, next) => {
     const row = await Review.findByPk(req.params.id);
     if (!row) throw new AppError('Review not found', 404);
     row.status = 'HIDDEN';
+    row.is_active = false;
     row.moderated_by = req.user.id;
     row.updated_by = req.user.id;
     await row.save();

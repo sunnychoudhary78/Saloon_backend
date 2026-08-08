@@ -137,6 +137,7 @@ function minRatingSalonExistsLiteral(sequelize, minRating) {
     SELECT salon_id
     FROM reviews
     WHERE status = 'PUBLISHED'
+      AND is_active = true
     GROUP BY salon_id
     HAVING AVG(rating) >= ${sequelize.escape(minRating)}
   )`);

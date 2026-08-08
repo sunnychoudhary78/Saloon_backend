@@ -12,6 +12,7 @@ module.exports = (sequelize, DataTypes) => {
       salon_id: { type: DataTypes.UUID, allowNull: false },
       booking_id: { type: DataTypes.UUID, allowNull: false, unique: true },
       rating: { type: DataTypes.INTEGER, allowNull: false },
+      staff_rating: { type: DataTypes.INTEGER, allowNull: true },
       review: { type: DataTypes.TEXT, allowNull: true },
       status: {
         type: DataTypes.ENUM('PUBLISHED', 'HIDDEN'),

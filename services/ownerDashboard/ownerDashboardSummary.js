@@ -360,6 +360,7 @@ async function fetchReputation(scope) {
     FROM "${SCHEMA}"."reviews"
     WHERE salon_id IN (:salonIds)
       AND status = 'PUBLISHED'
+      AND is_active = true
     `,
     {
       replacements: { salonIds: scope.salonIds },

@@ -460,7 +460,7 @@ async function assertSlotBookable(salonId, date, slotStart, { isPremium = false 
   };
 }
 
-async function assertAdditionalServiceBookable(salonId, date, slotStart, serviceId, customerId, options = {}) {
+async function assertCustomerServiceSlotFree(salonId, date, slotStart, serviceId, customerId, options = {}) {
   const normalized = normalizeSlotStart(slotStart);
   if (!normalized) throw new AppError('booking_time must be on the hour (e.g. 10:00)', 400);
 
@@ -480,6 +480,8 @@ async function assertAdditionalServiceBookable(salonId, date, slotStart, service
     throw new AppError('You already booked this service for the selected slot', 409);
   }
 }
+
+const assertAdditionalServiceBookable = assertCustomerServiceSlotFree;
 
 async function setSlotBlocked(salonId, slotDate, slotStart, isBlocked, note, userId) {
   const normalized = normalizeSlotStart(slotStart);
@@ -549,6 +551,7 @@ module.exports = {
   getBatchTodayAvailabilitySummaries,
   getBatchAvailabilitySummariesForDate,
   assertSlotBookable,
+  assertCustomerServiceSlotFree,
   assertAdditionalServiceBookable,
   setSlotBlocked,
 };

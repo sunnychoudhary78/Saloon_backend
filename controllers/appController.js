@@ -43,7 +43,7 @@ const {
   getTodayAvailabilitySummary,
   getBatchTodayAvailabilitySummaries,
   assertSlotBookable,
-  assertAdditionalServiceBookable,
+  assertCustomerServiceSlotFree,
   setSlotBlocked,
   loadPremiumConfig,
   resolvePremiumConfigForSalon,
@@ -71,6 +71,7 @@ const {
   isBookingReviewable,
   shapeBookingReviewFlags,
   shapePublicReview,
+  PUBLIC_REVIEW_WHERE,
 } = require('../services/reviewService');
 const {
   generateSalonImageVariants,
@@ -984,7 +985,6 @@ exports.getSalon = async (req, res, next) => {
     data.gallery_images = shapeGalleryForDetail(data.gallery_images);
     data = shapeDiscountSummary(data);
     data.street = data.address || '';
-    delete data.phone;
     res.json({ data });
   } catch (err) {
     next(err);
@@ -1003,15 +1003,24 @@ exports.getSalonReviews = async (req, res, next) => {
     const offset = parseInt(req.query.offset, 10) || 0;
 
     const { count, rows } = await Review.findAndCountAll({
-      where: { salon_id: salon.id, status: 'PUBLISHED' },
-      include: [{
-        model: Customer,
-        as: 'customer',
-        include: [{ model: User, as: 'user', attributes: ['name'] }],
-      }],
+      where: { salon_id: salon.id, ...PUBLIC_REVIEW_WHERE },
+      include: [
+        {
+          model: Customer,
+          as: 'customer',
+          include: [{ model: User, as: 'user', attributes: ['name'] }],
+        },
+        {
+          model: Booking,
+          as: 'booking',
+          attributes: ['id', 'staff_id'],
+          include: [{ model: SalonStaff, as: 'staff', attributes: ['id', 'name'] }],
+        },
+      ],
       order: [['created_at', 'DESC']],
       limit,
       offset,
+      distinct: true,
     });
 
     res.json({
@@ -1085,16 +1094,14 @@ exports.createBooking = async (req, res, next) => {
       });
       if (!service) throw new AppError(`Service not found: ${currentServiceId}`, 404);
 
-      if (i > 0) {
-        await assertAdditionalServiceBookable(
-          salon_id,
-          booking_date,
-          normalizedTime,
-          currentServiceId,
-          customer.id,
-          { transaction: t }
-        );
-      }
+      await assertCustomerServiceSlotFree(
+        salon_id,
+        booking_date,
+        normalizedTime,
+        currentServiceId,
+        customer.id,
+        { transaction: t }
+      );
 
       const booking = await Booking.create({
         booking_number: await generateBookingNumber(t),
@@ -1154,6 +1161,13 @@ exports.createBooking = async (req, res, next) => {
     }
   } catch (err) {
     await t.rollback();
+    if (err.name === 'SequelizeUniqueConstraintError') {
+      const constraint = String(err.parent?.constraint || err.index || '');
+      if (constraint.includes('customer_service_slot')) {
+        return next(new AppError('You already booked this service for the selected slot', 409));
+      }
+      return next(new AppError('This slot is already booked', 409));
+    }
     next(err);
   }
 };
@@ -1466,7 +1480,7 @@ exports.createReview = async (req, res, next) => {
     const customer = await Customer.findOne({ where: { user_id: req.user.id } });
     if (!customer) throw new AppError('Customer profile not found', 404);
 
-    const { booking_id, rating, review } = req.body;
+    const { booking_id, rating, staff_rating: staffRatingBody, review } = req.body;
 
     const existingReview = await Review.findOne({ where: { booking_id } });
     if (existingReview) {
@@ -1483,13 +1497,29 @@ exports.createReview = async (req, res, next) => {
       throw new AppError('You can review this booking after your appointment slot ends', 400);
     }
 
+    const hasStaff = Boolean(booking.staff_id);
+    let staffRating = null;
+    if (hasStaff) {
+      if (staffRatingBody == null) {
+        throw new AppError('staff_rating is required when the booking has assigned staff', 400);
+      }
+      staffRating = staffRatingBody;
+    }
+
+    const comment = typeof review === 'string' ? review.trim() : '';
+    if ((rating <= 2 || (staffRating != null && staffRating <= 2)) && !comment) {
+      throw new AppError('Please add a comment for low ratings', 400);
+    }
+
     const row = await Review.create({
       customer_id: customer.id,
       salon_id: booking.salon_id,
       booking_id,
       rating,
-      review: review || null,
+      staff_rating: staffRating,
+      review: comment || null,
       status: 'PUBLISHED',
+      is_active: true,
       created_by: req.user.id,
       updated_by: req.user.id,
     });
@@ -1838,7 +1868,7 @@ exports.getOwnerDashboard = async (req, res, next) => {
       Booking.count({ where: { salon_id: { [Op.in]: salonIds }, booking_status: 'PENDING' } }),
       Booking.count({ where: { salon_id: { [Op.in]: salonIds }, booking_status: 'ACCEPTED' } }),
       Booking.count({ where: { salon_id: { [Op.in]: salonIds }, booking_status: 'COMPLETED' } }),
-      Review.count({ where: { salon_id: { [Op.in]: salonIds } } }),
+      Review.count({ where: { salon_id: { [Op.in]: salonIds }, ...PUBLIC_REVIEW_WHERE } }),
     ]);
 
     res.json({
@@ -1857,15 +1887,39 @@ exports.getOwnerReviews = async (req, res, next) => {
   try {
     const owner = await getSalonOwnerForUser(req.user.id);
     const salons = await Salon.findAll({ where: { owner_id: owner.id }, attributes: ['id'] });
+    const includeHidden = String(req.query.include_hidden || '').toLowerCase() === 'true'
+      || req.query.include_hidden === '1'
+      || req.query.include_hidden === true;
+
+    const where = { salon_id: { [Op.in]: salons.map((s) => s.id) } };
+    if (!includeHidden) {
+      Object.assign(where, PUBLIC_REVIEW_WHERE);
+    }
+
     const reviews = await Review.findAll({
-      where: { salon_id: { [Op.in]: salons.map((s) => s.id) } },
+      where,
       include: [
         { model: Customer, as: 'customer', include: [{ model: User, as: 'user', attributes: ['name'] }] },
         { model: Salon, as: 'salon', attributes: ['salon_name'] },
+        {
+          model: Booking,
+          as: 'booking',
+          attributes: ['id', 'staff_id'],
+          include: [{ model: SalonStaff, as: 'staff', attributes: ['id', 'name'] }],
+        },
       ],
       order: [['created_at', 'DESC']],
     });
-    res.json({ data: reviews });
+    res.json({
+      data: reviews.map((row) => {
+        const plain = row.get({ plain: true });
+        return {
+          ...plain,
+          customer_name: plain.customer?.user?.name || null,
+          staff_name: plain.booking?.staff?.name || null,
+        };
+      }),
+    });
   } catch (err) {
     next(err);
   }
@@ -2053,11 +2107,9 @@ exports.uploadProfileImage = async (req, res, next) => {
       throw new AppError('No image uploaded', 400);
     }
 
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
     const path = require('path');
     const url = await generateProfileImage(
       path.join(req.file.destination, req.file.filename),
-      baseUrl,
     );
 
     res.status(201).json({ data: { url } });
@@ -2072,11 +2124,9 @@ exports.uploadStaffImage = async (req, res, next) => {
       throw new AppError('No image uploaded', 400);
     }
 
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
     const path = require('path');
     const url = await generateStaffImage(
       path.join(req.file.destination, req.file.filename),
-      baseUrl,
     );
 
     res.status(201).json({ data: { url } });

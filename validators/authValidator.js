@@ -33,6 +33,7 @@ const staffUpdateSchema = Joi.object({
 const reviewSchema = Joi.object({
   booking_id: Joi.string().uuid().required(),
   rating: Joi.number().integer().min(1).max(5).required(),
+  staff_rating: Joi.number().integer().min(1).max(5).allow(null).optional(),
   review: Joi.string().trim().max(2000).allow(null, '').optional(),
 });
 

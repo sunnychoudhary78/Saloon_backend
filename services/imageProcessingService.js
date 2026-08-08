@@ -162,7 +162,7 @@ async function generateSalonImageVariants(sourcePath, baseUrl) {
   };
 }
 
-async function generateProfileImage(sourcePath, baseUrl) {
+async function generateProfileImage(sourcePath) {
   const fileName = `profile-${Date.now()}-${Math.random().toString(36).substring(2, 10)}.jpg`;
   fs.mkdirSync(PROFILE_UPLOAD_DIR, { recursive: true });
   const outputPath = path.join(PROFILE_UPLOAD_DIR, fileName);
@@ -177,10 +177,10 @@ async function generateProfileImage(sourcePath, baseUrl) {
     fs.unlinkSync(sourcePath);
   } catch (_) {}
 
-  return `${baseUrl}/api/uploads/profiles/${fileName}`;
+  return `/api/uploads/profiles/${fileName}`;
 }
 
-async function generateStaffImage(sourcePath, baseUrl) {
+async function generateStaffImage(sourcePath) {
   const fileName = `staff-${Date.now()}-${Math.random().toString(36).substring(2, 10)}.jpg`;
   fs.mkdirSync(STAFF_UPLOAD_DIR, { recursive: true });
   const outputPath = path.join(STAFF_UPLOAD_DIR, fileName);
@@ -195,7 +195,7 @@ async function generateStaffImage(sourcePath, baseUrl) {
     fs.unlinkSync(sourcePath);
   } catch (_) {}
 
-  return `${baseUrl}/api/uploads/staff/${fileName}`;
+  return `/api/uploads/staff/${fileName}`;
 }
 
 module.exports = {

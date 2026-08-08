@@ -3,6 +3,7 @@ const { Review, Booking } = require('../models');
 
 const REVIEWABLE_STATUSES = ['ACCEPTED', 'COMPLETED'];
 const DEFAULT_SLOT_DURATION_MINUTES = 60;
+const PUBLIC_REVIEW_WHERE = Object.freeze({ status: 'PUBLISHED', is_active: true });
 
 function parseTimeParts(timeValue) {
   if (timeValue == null || timeValue === '') return { hours: 0, minutes: 0 };
@@ -113,7 +114,7 @@ function normalizeRatingSummary(averageRaw, reviewCount) {
 
 async function getSalonRatingSummary(salonId) {
   const [row] = await Review.findAll({
-    where: { salon_id: salonId, status: 'PUBLISHED' },
+    where: { salon_id: salonId, ...PUBLIC_REVIEW_WHERE },
     attributes: [
       [fn('AVG', col('rating')), 'average_rating'],
       [fn('COUNT', col('id')), 'review_count'],
@@ -128,7 +129,7 @@ async function getBatchSalonRatingSummaries(salonIds) {
   if (!salonIds.length) return new Map();
 
   const rows = await Review.findAll({
-    where: { salon_id: { [Op.in]: salonIds }, status: 'PUBLISHED' },
+    where: { salon_id: { [Op.in]: salonIds }, ...PUBLIC_REVIEW_WHERE },
     attributes: [
       'salon_id',
       [fn('AVG', col('rating')), 'average_rating'],
@@ -149,7 +150,10 @@ async function getStaffRatingSummary(staffId) {
   if (!staffId) return emptyStaffRatingSummary();
 
   const [row] = await Review.findAll({
-    where: { status: 'PUBLISHED' },
+    where: {
+      ...PUBLIC_REVIEW_WHERE,
+      staff_rating: { [Op.ne]: null },
+    },
     include: [{
       model: Booking,
       as: 'booking',
@@ -158,7 +162,7 @@ async function getStaffRatingSummary(staffId) {
       where: { staff_id: staffId },
     }],
     attributes: [
-      [fn('AVG', col('Review.rating')), 'average_rating'],
+      [fn('AVG', col('Review.staff_rating')), 'average_rating'],
       [fn('COUNT', col('Review.id')), 'review_count'],
     ],
     raw: true,
@@ -171,7 +175,10 @@ async function getBatchStaffRatingSummaries(staffIds) {
   if (!staffIds.length) return new Map();
 
   const rows = await Review.findAll({
-    where: { status: 'PUBLISHED' },
+    where: {
+      ...PUBLIC_REVIEW_WHERE,
+      staff_rating: { [Op.ne]: null },
+    },
     include: [{
       model: Booking,
       as: 'booking',
@@ -181,7 +188,7 @@ async function getBatchStaffRatingSummaries(staffIds) {
     }],
     attributes: [
       [col('booking.staff_id'), 'staff_id'],
-      [fn('AVG', col('Review.rating')), 'average_rating'],
+      [fn('AVG', col('Review.staff_rating')), 'average_rating'],
       [fn('COUNT', col('Review.id')), 'review_count'],
     ],
     group: [col('booking.staff_id')],
@@ -246,9 +253,12 @@ function maskCustomerName(fullName) {
 function shapePublicReview(review) {
   const plain = typeof review.get === 'function' ? review.get({ plain: true }) : review;
   const customerName = maskCustomerName(plain.customer?.user?.name);
+  const staffName = plain.booking?.staff?.name || null;
   return {
     id: plain.id,
     rating: plain.rating,
+    staff_rating: plain.staff_rating ?? null,
+    staff_name: staffName,
     review: plain.review,
     created_at: plain.created_at,
     customer_name: customerName,
@@ -270,6 +280,7 @@ function shapeBookingReviewFlags(booking, service, review) {
 module.exports = {
   REVIEWABLE_STATUSES,
   DEFAULT_SLOT_DURATION_MINUTES,
+  PUBLIC_REVIEW_WHERE,
   normalizeBookingDate,
   parseTimeParts,
   getSlotEndDateTime,

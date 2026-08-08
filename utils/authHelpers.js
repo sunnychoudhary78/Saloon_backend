@@ -4,7 +4,7 @@ const { User, Role, Permission } = require('../models');
 const ADMIN_ROLES = ['SUPER_ADMIN', 'ADMIN', 'SUPPORT_AGENT', 'MARKETING_MANAGER'];
 const MOBILE_ROLES = ['CUSTOMER', 'SALON_OWNER'];
 
-function generateToken(user, roles = []) {
+function generateToken(user, roles = [], expiresIn = '8h') {
   const roleNames = roles.length
     ? roles.map((r) => (typeof r === 'string' ? r : r.name))
     : (user.Roles || []).map((r) => r.name);
@@ -12,7 +12,7 @@ function generateToken(user, roles = []) {
   return jwt.sign(
     { id: user.id, roles: roleNames },
     process.env.JWT_SECRET,
-    { expiresIn: '8h' }
+    { expiresIn }
   );
 }
 

@@ -39,7 +39,9 @@ exports.login = async (req, res) => {
       return res.status(403).json({ message: 'Admin panel access denied' });
     }
 
-    const token = generateToken(fullUser);
+    const clientType = String(req.headers['x-client-type'] || '').toLowerCase();
+    const expiresIn = clientType === 'admin-mobile' ? '365d' : '8h';
+    const token = generateToken(fullUser, [], expiresIn);
     const userData = shapeUserResponse(fullUser);
 
     res.json({ token, user: userData });

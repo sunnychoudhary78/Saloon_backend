@@ -192,4 +192,9 @@ async function rejectApplication(applicationId, reviewerId, rejectionReason, req
   return application;
 }
 
-module.exports = { approveApplication, rejectApplication, normalizeApplicationType };
+module.exports = {
+  approveApplication,
+  rejectApplication,
+  normalizeApplicationType,
+  salonFieldsFromApplication,
+};

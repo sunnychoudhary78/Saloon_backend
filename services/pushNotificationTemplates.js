@@ -23,11 +23,22 @@ const SCREENS = {
   OWNER_REVIEWS: 'owner_reviews',
 };
 
-function buildPayload({ type, title, body, bookingId, applicationId, salonId, screen, userRole }) {
+function buildPayload({
+  type,
+  title,
+  body,
+  bookingId,
+  applicationId,
+  salonId,
+  screen,
+  userRole,
+  extraData = {},
+}) {
   const data = {
     type,
     screen,
     userRole,
+    ...extraData,
   };
   if (bookingId) {
     data.bookingId = String(bookingId);
@@ -149,14 +160,36 @@ function promotionalOffer(title, body) {
   });
 }
 
-function newBooking(booking, customerName, salonName) {
+function newBooking(booking, details = {}) {
+  const customerName = details.customerName || 'A customer';
+  const serviceName = details.serviceName || 'Service';
+  const bookingDate = details.bookingDate || booking.booking_date || '';
+  const bookingTime = details.bookingTime || booking.booking_time || '';
+  const amount = details.amount != null ? String(details.amount) : '';
+  const when = [bookingDate, bookingTime].filter(Boolean).join(' ');
+  const amountPart = amount ? ` · ₹${amount}` : '';
+  const body = `${customerName} · ${serviceName}${when ? ` · ${when}` : ''}${amountPart}`;
+
   return buildPayload({
     type: NOTIFICATION_TYPES.NEW_BOOKING,
     title: 'New Booking Request',
-    body: `${customerName} requested an appointment at ${salonName}.`,
+    body,
     bookingId: booking.id,
+    salonId: details.salonId || booking.salon_id || booking.salon?.id,
     screen: SCREENS.OWNER_BOOKING_DETAILS,
     userRole: 'salon_owner',
+    extraData: {
+      customerName,
+      serviceName,
+      bookingDate: String(bookingDate || ''),
+      bookingTime: String(bookingTime || ''),
+      amount,
+      bookingGroupId: String(details.bookingGroupId || booking.booking_group_id || booking.id),
+      actions: 'accept,reject',
+      channelId: 'catchy_urgent_bookings',
+      sound: 'booking_urgent',
+      priority: 'max',
+    },
   });
 }
 

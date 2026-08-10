@@ -4,12 +4,12 @@ const {
   Customer,
   User,
   Service,
+  Booking,
 } = require('../models');
 const { sendToUserAsync } = require('./pushNotificationService');
 const templates = require('./pushNotificationTemplates');
 
 async function loadBookingContext(bookingId) {
-  const { Booking } = require('../models');
   return Booking.findByPk(bookingId, {
     include: [
       {
@@ -29,7 +29,7 @@ async function loadBookingContext(bookingId) {
           },
         ],
       },
-      { model: Service, as: 'service', attributes: ['service_name'] },
+      { model: Service, as: 'service', attributes: ['service_name', 'price', 'discount_price'] },
     ],
   });
 }
@@ -50,13 +50,58 @@ function customerName(booking) {
   return booking?.customer?.user?.name || 'A customer';
 }
 
+function serviceEffectivePrice(service) {
+  if (!service) return 0;
+  const price = Number(service.price) || 0;
+  const discount = service.discount_price != null ? Number(service.discount_price) : null;
+  if (discount != null && discount > 0 && discount < price) return discount;
+  return price;
+}
+
+function formatMoney(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '0';
+  return Number.isInteger(num) ? String(num) : num.toFixed(2);
+}
+
+async function buildNewBookingDetails(booking) {
+  const groupId = booking.booking_group_id || booking.id;
+  const groupRows = await Booking.findAll({
+    where: { booking_group_id: groupId },
+    include: [
+      { model: Service, as: 'service', attributes: ['service_name', 'price', 'discount_price'] },
+    ],
+    order: [['created_at', 'ASC']],
+  });
+  const rows = groupRows.length ? groupRows : [booking];
+  const serviceNames = rows
+    .map((row) => row.service?.service_name)
+    .filter(Boolean);
+  const amount = rows.reduce((sum, row) => sum + serviceEffectivePrice(row.service), 0);
+  const premium = Number(booking.premium_amount) || 0;
+
+  return {
+    customerName: customerName(booking),
+    salonName: salonName(booking),
+    serviceName: serviceNames.length ? serviceNames.join(', ') : 'Service',
+    bookingDate: booking.booking_date,
+    bookingTime: booking.booking_time,
+    amount: formatMoney(amount + premium),
+    bookingGroupId: groupId,
+    salonId: booking.salon_id || booking.salon?.id,
+  };
+}
+
 function notifyNewBooking(bookingId) {
-  loadBookingContext(bookingId).then((booking) => {
-    if (!booking) return;
-    const userId = ownerUserId(booking);
-    if (!userId) return;
-    sendToUserAsync(userId, templates.newBooking(booking, customerName(booking), salonName(booking)));
-  }).catch((err) => console.error('[push] notifyNewBooking:', err.message));
+  loadBookingContext(bookingId)
+    .then(async (booking) => {
+      if (!booking) return;
+      const userId = ownerUserId(booking);
+      if (!userId) return;
+      const details = await buildNewBookingDetails(booking);
+      sendToUserAsync(userId, templates.newBooking(booking, details));
+    })
+    .catch((err) => console.error('[push] notifyNewBooking:', err.message));
 }
 
 function notifyBookingConfirmed(bookingId) {

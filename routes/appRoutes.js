@@ -9,6 +9,7 @@ const appAuthCtrl = require('../controllers/appAuthController');
 const {
   validateBooking,
   validateSalonApplication,
+  validateSalonOwnerUpdate,
   validateSlotBlock,
   validatePremiumBookingFee,
   validateStaff,
@@ -118,6 +119,7 @@ router.get('/owner/salon-applications', authMiddleware, roleMiddleware(['SALON_O
 router.get('/owner/salons/:salonId/slots', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.getOwnerSalonSlots));
 router.put('/owner/salons/:salonId/slots/block', authMiddleware, roleMiddleware(['SALON_OWNER']), validateSlotBlock, asyncHandler(ctrl.setOwnerSalonSlotBlock));
 router.put('/owner/salons/:salonId/premium-booking', authMiddleware, roleMiddleware(['SALON_OWNER']), validatePremiumBookingFee, asyncHandler(ctrl.updateOwnerSalonPremiumBooking));
+router.put('/owner/salons/:salonId', authMiddleware, roleMiddleware(['SALON_OWNER']), validateSalonOwnerUpdate, asyncHandler(ctrl.updateOwnerSalon));
 router.get('/service-names', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.getServiceNames));
 router.get('/owner/salons/:salonId/services', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.getOwnerServices));
 router.post('/owner/salons/:salonId/services', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.createOwnerService));

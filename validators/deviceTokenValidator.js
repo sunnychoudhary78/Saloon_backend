@@ -2,7 +2,7 @@ const Joi = require('joi');
 
 const registerSchema = Joi.object({
   token: Joi.string().min(1).max(512).required(),
-  platform: Joi.string().valid('android').default('android'),
+  platform: Joi.string().valid('android', 'ios').default('android'),
 });
 
 const unregisterSchema = Joi.object({

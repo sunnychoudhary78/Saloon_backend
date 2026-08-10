@@ -46,11 +46,19 @@ function getMessaging() {
   return messaging;
 }
 
-async function getTokensForUser(userId) {
+async function getTokenRowsForUser(userId) {
   const rows = await DeviceToken.findAll({
     where: { user_id: userId },
-    attributes: ['token'],
+    attributes: ['token', 'platform'],
   });
+  return rows.map((r) => ({
+    token: r.token,
+    platform: String(r.platform || 'android').toLowerCase(),
+  }));
+}
+
+async function getTokensForUser(userId) {
+  const rows = await getTokenRowsForUser(userId);
   return rows.map((r) => r.token);
 }
 
@@ -77,32 +85,18 @@ async function persistNotification(userId, payload) {
   }
 }
 
-async function sendToTokens(tokens, payload) {
-  const msg = getMessaging();
-  if (!msg || !tokens.length) return { successCount: 0, failureCount: 0 };
-
+function toStringData(payload) {
   const { notification, data } = payload;
-  // Send a data-only message so the client always renders the notification via
-  // its local-notification path. This avoids the duplicate notifications that
-  // happen when FCM auto-displays the `notification` payload AND the app shows
-  // its own local notification, and guarantees the data (bookingId, etc.) is
-  // available for deep-linking in both foreground and background.
-  const stringData = Object.fromEntries(
+  return Object.fromEntries(
     Object.entries({
       ...(data || {}),
       title: notification?.title || '',
       body: notification?.body || '',
-    }).map(([k, v]) => [k, String(v)]),
+    }).map(([k, v]) => [k, v == null ? '' : String(v)]),
   );
+}
 
-  const response = await msg.sendEachForMulticast({
-    tokens,
-    data: stringData,
-    android: {
-      priority: 'high',
-    },
-  });
-
+function collectInvalidTokens(response, tokens) {
   const invalidTokens = [];
   response.responses.forEach((res, i) => {
     if (!res.success) {
@@ -115,19 +109,105 @@ async function sendToTokens(tokens, payload) {
       }
     }
   });
-  await removeInvalidTokens(invalidTokens);
+  return invalidTokens;
+}
 
+async function sendAndroidDataOnly(msg, tokens, stringData, collapseKey) {
+  if (!tokens.length) return { successCount: 0, failureCount: 0, invalidTokens: [] };
+  const response = await msg.sendEachForMulticast({
+    tokens,
+    data: stringData,
+    android: {
+      priority: 'high',
+      collapseKey: collapseKey || undefined,
+      ttl: 3600 * 1000,
+    },
+  });
   return {
     successCount: response.successCount,
     failureCount: response.failureCount,
+    invalidTokens: collectInvalidTokens(response, tokens),
+  };
+}
+
+async function sendIosAlert(msg, tokens, payload, stringData, collapseId) {
+  if (!tokens.length) return { successCount: 0, failureCount: 0, invalidTokens: [] };
+  const title = payload.notification?.title || 'CATCHY';
+  const body = payload.notification?.body || '';
+  const isUrgentBooking = payload.data?.type === 'new_booking';
+  const sound = isUrgentBooking ? 'booking_urgent.wav' : 'default';
+  const category = isUrgentBooking ? 'BOOKING_REQUEST' : undefined;
+
+  const response = await msg.sendEachForMulticast({
+    tokens,
+    notification: { title, body },
+    data: stringData,
+    apns: {
+      headers: {
+        'apns-priority': '10',
+        ...(collapseId ? { 'apns-collapse-id': String(collapseId).slice(0, 64) } : {}),
+      },
+      payload: {
+        aps: {
+          alert: { title, body },
+          sound,
+          category,
+          'interruption-level': isUrgentBooking ? 'time-sensitive' : 'active',
+        },
+      },
+    },
+  });
+  return {
+    successCount: response.successCount,
+    failureCount: response.failureCount,
+    invalidTokens: collectInvalidTokens(response, tokens),
+  };
+}
+
+async function sendToTokens(tokensOrRows, payload) {
+  const msg = getMessaging();
+  if (!msg) return { successCount: 0, failureCount: 0 };
+
+  const rows = (tokensOrRows || []).map((item) =>
+    typeof item === 'string' ? { token: item, platform: 'android' } : item
+  );
+  if (!rows.length) return { successCount: 0, failureCount: 0 };
+
+  const stringData = toStringData(payload);
+  const collapseKey =
+    payload.data?.bookingGroupId ||
+    payload.data?.bookingId ||
+    undefined;
+
+  const androidTokens = rows
+    .filter((r) => r.platform !== 'ios')
+    .map((r) => r.token);
+  const iosTokens = rows
+    .filter((r) => r.platform === 'ios')
+    .map((r) => r.token);
+
+  const [androidResult, iosResult] = await Promise.all([
+    sendAndroidDataOnly(msg, androidTokens, stringData, collapseKey),
+    sendIosAlert(msg, iosTokens, payload, stringData, collapseKey),
+  ]);
+
+  const invalidTokens = [
+    ...(androidResult.invalidTokens || []),
+    ...(iosResult.invalidTokens || []),
+  ];
+  await removeInvalidTokens(invalidTokens);
+
+  return {
+    successCount: (androidResult.successCount || 0) + (iosResult.successCount || 0),
+    failureCount: (androidResult.failureCount || 0) + (iosResult.failureCount || 0),
   };
 }
 
 async function sendToUser(userId, payload) {
   await persistNotification(userId, payload);
-  const tokens = await getTokensForUser(userId);
-  if (!tokens.length) return { successCount: 0, failureCount: 0 };
-  return sendToTokens(tokens, payload);
+  const tokenRows = await getTokenRowsForUser(userId);
+  if (!tokenRows.length) return { successCount: 0, failureCount: 0 };
+  return sendToTokens(tokenRows, payload);
 }
 
 function sendToUserAsync(userId, payload) {

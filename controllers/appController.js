@@ -97,7 +97,8 @@ const {
   shapeSalonDistanceFields,
 } = require('../services/locationService');
 const { logAudit } = require('../services/auditService');
-const { normalizeApplicationType } = require('../services/salonApplicationService');
+const { normalizeApplicationType, salonFieldsFromApplication } = require('../services/salonApplicationService');
+const { ensureApplicationCoordinates } = require('../services/geocodingService');
 const { searchPlaces, getPlaceDetails, reverseGeocodeCoordinates } = require('../services/geocodingService');
 const {
   createOrReuseRazorpayOrder,
@@ -664,10 +665,17 @@ exports.submitSalonApplication = async (req, res, next) => {
     if (!owner) throw new AppError('Register as salon owner first', 403);
 
     const applicationType = normalizeApplicationType(req.body.application_type || 'CREATE');
+    if (applicationType === 'UPDATE') {
+      throw new AppError(
+        'Salon profile edits no longer require approval. Update the salon directly instead.',
+        400
+      );
+    }
+
     const salonId = req.body.salon_id || null;
     let payload = { ...req.body, application_type: applicationType };
 
-    if (applicationType === 'UPDATE' || applicationType === 'DEACTIVATE' || applicationType === 'ACTIVATE') {
+    if (applicationType === 'DEACTIVATE' || applicationType === 'ACTIVATE') {
       const { salon } = await assertSalonOwnership(req.user.id, salonId);
 
       const pending = await SalonApplication.findOne({
@@ -1160,8 +1168,8 @@ exports.createBooking = async (req, res, next) => {
         : fullBookings.map(shapeCustomerBooking),
     });
 
-    for (const booking of fullBookings) {
-      notifyNewBooking(booking.id);
+    if (fullBookings[0]) {
+      notifyNewBooking(fullBookings[0].id);
     }
   } catch (err) {
     await t.rollback();
@@ -1806,6 +1814,16 @@ exports.acceptBooking = async (req, res, next) => {
     });
     if (!booking) throw new AppError('Booking not found', 404);
     await assertSalonOwnership(req.user.id, booking.salon_id);
+
+    if (booking.booking_status === 'ACCEPTED') {
+      await t.commit();
+      committed = true;
+      const fullBooking = await Booking.findByPk(booking.id, {
+        include: ownerBookingDetailInclude(),
+      });
+      return res.json({ data: shapeBookingWithPayments(fullBooking) });
+    }
+
     if (!canTransition(booking.booking_status, 'ACCEPTED')) {
       throw new AppError('Cannot accept this booking', 400);
     }
@@ -1844,6 +1862,16 @@ exports.rejectBooking = async (req, res, next) => {
     });
     if (!booking) throw new AppError('Booking not found', 404);
     await assertSalonOwnership(req.user.id, booking.salon_id);
+
+    if (booking.booking_status === 'REJECTED') {
+      await t.commit();
+      committed = true;
+      const fullBooking = await Booking.findByPk(booking.id, {
+        include: ownerBookingDetailInclude(),
+      });
+      return res.json({ data: shapeBookingWithPayments(fullBooking) });
+    }
+
     if (!canTransition(booking.booking_status, 'REJECTED')) {
       throw new AppError('Cannot reject this booking', 400);
     }
@@ -2084,6 +2112,36 @@ exports.updateOwnerSalonPremiumBooking = async (req, res, next) => {
         premium_config: premiumConfig,
       },
     });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.updateOwnerSalon = async (req, res, next) => {
+  try {
+    const { salon } = await assertSalonOwnership(req.user.id, req.params.salonId);
+    const salonCoords = await ensureApplicationCoordinates(req.body);
+    if (!salonCoords) {
+      throw new AppError(
+        'Salon location is required — set coordinates or use a valid address',
+        400
+      );
+    }
+
+    await salon.update({
+      ...salonFieldsFromApplication(req.body, salonCoords, salon),
+      updated_by: req.user.id,
+    });
+
+    await logAudit({
+      userId: req.user.id,
+      action: 'salon.update',
+      entityType: 'Salon',
+      entityId: salon.id,
+      req,
+    });
+
+    res.json({ data: salon });
   } catch (err) {
     next(err);
   }

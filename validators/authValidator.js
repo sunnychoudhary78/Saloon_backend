@@ -56,6 +56,51 @@ function parseTimeToMinutes(value) {
   return parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
 }
 
+const salonOwnerUpdateSchema = Joi.object({
+  salon_name: Joi.string().required(),
+  salon_type: Joi.string().valid('MEN', 'WOMEN', 'UNISEX').required(),
+  description: Joi.string().allow(null, '').optional(),
+  address: Joi.string().allow(null, '').optional(),
+  street: Joi.string().allow(null, '').optional(),
+  formatted_address: Joi.string().allow(null, '').optional(),
+  locality: Joi.string().allow(null, '').optional(),
+  postal_code: Joi.string().allow(null, '').max(16).optional(),
+  city: Joi.string().required(),
+  state: Joi.string().required(),
+  latitude: Joi.number().min(-90).max(90).required(),
+  longitude: Joi.number().min(-180).max(180).required(),
+  cover_image: Joi.string().allow(null, '').optional(),
+  gallery_images: Joi.array().items(Joi.string().uri()).optional(),
+  phone: Joi.string().pattern(/^[0-9]{10}$/).required().messages({
+    'string.pattern.base': 'Phone must be exactly 10 digits',
+  }),
+  opening_time: Joi.string().pattern(timePattern).required(),
+  closing_time: Joi.string().pattern(timePattern).required(),
+  premium_booking_fee: Joi.number().min(1).max(10000).allow(null).optional(),
+}).custom((value, helpers) => {
+  const street = String(value.street || value.address || '').trim();
+  if (!street) {
+    return helpers.message('address is required');
+  }
+  value.address = street;
+  delete value.street;
+
+  if (value.formatted_address != null) {
+    value.formatted_address = String(value.formatted_address).trim() || null;
+  }
+  if (value.locality != null) {
+    value.locality = String(value.locality).trim() || null;
+  }
+  if (value.postal_code != null) {
+    value.postal_code = String(value.postal_code).trim() || null;
+  }
+
+  if (parseTimeToMinutes(value.closing_time) <= parseTimeToMinutes(value.opening_time)) {
+    return helpers.message('closing_time must be after opening_time');
+  }
+  return value;
+});
+
 const salonApplicationSchema = Joi.object({
   application_type: Joi.string()
     .valid('CREATE', 'UPDATE', 'DEACTIVATE', 'ACTIVATE', 'CLOSE')
@@ -178,6 +223,7 @@ module.exports = {
   validateStaffUpdate: validate(staffUpdateSchema),
   validateReview: validate(reviewSchema),
   validateSalonApplication: validate(salonApplicationSchema),
+  validateSalonOwnerUpdate: validate(salonOwnerUpdateSchema),
   validateSlotBlock: validate(slotBlockSchema),
   validatePremiumBookingFee: validate(premiumBookingFeeSchema),
 };

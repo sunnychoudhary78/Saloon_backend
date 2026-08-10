@@ -14,6 +14,11 @@ module.exports = (sequelize, DataTypes) => {
       duration_minutes: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 30 },
       price: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
       discount_price: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+      service_for: {
+        type: DataTypes.ENUM('MEN', 'WOMEN', 'UNISEX'),
+        allowNull: false,
+        defaultValue: 'UNISEX',
+      },
       status: {
         type: DataTypes.ENUM('ACTIVE', 'INACTIVE'),
         allowNull: false,

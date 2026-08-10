@@ -4,10 +4,19 @@ const { serviceRegistryByKey } = require('../config/columnRegistry');
 const {
   assertUniqueServiceIdentity,
   mapServiceIdentityConflict,
+  resolveServiceFor,
 } = require('../services/serviceIdentityService');
 const { ilikeOr } = require('../utils/adminSearch');
 
-const defaultColumns = ['service_name', 'salon_name', 'description', 'price', 'duration_minutes', 'status'];
+const defaultColumns = [
+  'service_name',
+  'salon_name',
+  'service_for',
+  'description',
+  'price',
+  'duration_minutes',
+  'status',
+];
 
 exports.query = async (req, res, next) => {
   try {
@@ -57,17 +66,29 @@ exports.query = async (req, res, next) => {
 
 exports.create = async (req, res, next) => {
   try {
-    const { salon_id, service_name, description, duration_minutes, price, discount_price, status } = req.body;
+    const { salon_id, service_name, description, duration_minutes, price, discount_price, status, service_for } =
+      req.body;
     const normalizedName = String(service_name || '').trim();
     const normalizedDescription = description ? String(description).trim() : null;
     if (!salon_id || !normalizedName || price == null) {
       throw new AppError('salon_id, service_name, and price are required', 400);
     }
+
+    const salon = await Salon.findByPk(salon_id);
+    if (!salon) throw new AppError('Salon not found', 404);
+
+    const resolvedServiceFor = resolveServiceFor({
+      salonType: salon.salon_type,
+      requested: service_for,
+      isCreate: true,
+    });
+
     await assertUniqueServiceIdentity({
       salonId: salon_id,
       serviceName: normalizedName,
       description: normalizedDescription,
       price,
+      serviceFor: resolvedServiceFor,
     });
     const row = await Service.create({
       salon_id,
@@ -76,6 +97,7 @@ exports.create = async (req, res, next) => {
       duration_minutes: duration_minutes || 30,
       price,
       discount_price,
+      service_for: resolvedServiceFor,
       status: status || 'ACTIVE',
       created_by: req.user.id,
       updated_by: req.user.id,
@@ -97,11 +119,23 @@ exports.update = async (req, res, next) => {
     row.service_name = String(row.service_name || '').trim();
     row.description = row.description ? String(row.description).trim() : null;
     if (!row.service_name) throw new AppError('service_name is required', 400);
+
+    const salon = await Salon.findByPk(row.salon_id);
+    if (!salon) throw new AppError('Salon not found', 404);
+
+    row.service_for = resolveServiceFor({
+      salonType: salon.salon_type,
+      requested: req.body.service_for,
+      existing: row,
+      isCreate: false,
+    });
+
     await assertUniqueServiceIdentity({
       salonId: row.salon_id,
       serviceName: row.service_name,
       description: row.description,
       price: row.price,
+      serviceFor: row.service_for,
       excludeId: row.id,
     });
     row.updated_by = req.user.id;

@@ -61,6 +61,7 @@ const { notifyNewReview } = require('../services/reviewNotificationHelper');
 const {
   assertUniqueServiceIdentity,
   mapServiceIdentityConflict,
+  resolveServiceFor,
 } = require('../services/serviceIdentityService');
 const { serviceNamesForSalonType } = require('../constants/salonServiceNames');
 const {
@@ -312,6 +313,9 @@ function buildOwnerServicePayload(body, existing = null) {
       throw new AppError('Invalid service status', 400);
     }
     payload.status = body.status;
+  }
+  if (body.service_for !== undefined) {
+    payload.service_for = body.service_for;
   }
 
   if (!existing) {
@@ -1663,13 +1667,19 @@ exports.getOwnerServices = async (req, res, next) => {
 
 exports.createOwnerService = async (req, res, next) => {
   try {
-    await assertSalonOwnership(req.user.id, req.params.salonId);
+    const { salon } = await assertSalonOwnership(req.user.id, req.params.salonId);
     const payload = buildOwnerServicePayload(req.body);
+    payload.service_for = resolveServiceFor({
+      salonType: salon.salon_type,
+      requested: req.body.service_for,
+      isCreate: true,
+    });
     await assertUniqueServiceIdentity({
       salonId: req.params.salonId,
       serviceName: payload.service_name,
       description: payload.description,
       price: payload.price,
+      serviceFor: payload.service_for,
     });
     const service = await Service.create({
       salon_id: req.params.salonId,
@@ -1685,15 +1695,22 @@ exports.createOwnerService = async (req, res, next) => {
 
 exports.updateOwnerService = async (req, res, next) => {
   try {
-    await assertSalonOwnership(req.user.id, req.params.salonId);
+    const { salon } = await assertSalonOwnership(req.user.id, req.params.salonId);
     const service = await Service.findOne({ where: { id: req.params.serviceId, salon_id: req.params.salonId } });
     if (!service) throw new AppError('Service not found', 404);
     Object.assign(service, buildOwnerServicePayload(req.body, service));
+    service.service_for = resolveServiceFor({
+      salonType: salon.salon_type,
+      requested: req.body.service_for,
+      existing: service,
+      isCreate: false,
+    });
     await assertUniqueServiceIdentity({
       salonId: req.params.salonId,
       serviceName: service.service_name,
       description: service.description,
       price: service.price,
+      serviceFor: service.service_for,
       excludeId: service.id,
     });
     service.updated_by = req.user.id;

@@ -22,6 +22,7 @@ test('allows a service identity when no exact duplicate exists', async (t) => {
       serviceName: 'Haircut',
       description: 'Premium styling',
       price: 650,
+      serviceFor: 'MEN',
     })
   );
 });
@@ -39,6 +40,7 @@ test('rejects an exact duplicate with a conflict response', async (t) => {
       serviceName: ' Haircut ',
       description: 'Premium   styling',
       price: 650,
+      serviceFor: 'MEN',
     }),
     (error) =>
       error.statusCode === 409 &&
@@ -62,10 +64,34 @@ test('excludes the current service while validating an update', async (t) => {
     serviceName: 'Haircut',
     description: null,
     price: 300,
+    serviceFor: 'WOMEN',
     excludeId: 'service-1',
   });
 
   assert.deepEqual(capturedWhere.id, { [Op.ne]: 'service-1' });
+  assert.equal(capturedWhere.service_for, 'WOMEN');
+});
+
+test('allows same name and price for different service_for values', async (t) => {
+  const originalFindOne = Service.findOne;
+  t.after(() => {
+    Service.findOne = originalFindOne;
+  });
+  let capturedWhere;
+  Service.findOne = async ({ where }) => {
+    capturedWhere = where;
+    return null;
+  };
+
+  await assertUniqueServiceIdentity({
+    salonId: 'salon-1',
+    serviceName: 'Haircut',
+    description: null,
+    price: 300,
+    serviceFor: 'WOMEN',
+  });
+
+  assert.equal(capturedWhere.service_for, 'WOMEN');
 });
 
 test('maps database uniqueness races to the same conflict response', () => {

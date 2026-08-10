@@ -125,6 +125,12 @@ const serviceRegistry = [
     path: "duration_minutes",
     type: "number",
   },
+  {
+    key: "service_for",
+    label: "For",
+    path: "service_for",
+    type: "string",
+  },
   { key: "status", label: "Status", path: "status", type: "string" },
 ];
 

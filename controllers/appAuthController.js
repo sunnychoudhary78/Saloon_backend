@@ -124,7 +124,11 @@ exports.otpVerify = async (req, res, next) => {
         throw new AppError('This account cannot be used with the mobile app.', 403);
       }
 
-      const token = generateToken(fullUser);
+      const token = generateToken(
+        fullUser,
+        [],
+        process.env.JWT_APP_EXPIRES_IN || '365d'
+      );
       return res.json({
         isNewUser: false,
         token,
@@ -196,7 +200,11 @@ exports.completeProfile = async (req, res, next) => {
     await t.commit();
 
     const fullUser = await loadUserWithRoles(user.id);
-    const jwtToken = generateToken(fullUser);
+    const jwtToken = generateToken(
+      fullUser,
+      [],
+      process.env.JWT_APP_EXPIRES_IN || '365d'
+    );
 
     res.status(201).json({
       isNewUser: false,

@@ -76,6 +76,8 @@ GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA salon_booking_schema TO salonboo
 // Do not commit this file to git.
 
 JWT_SECRET=salon_booking_jwt_secret_change_in_prod
+# Mobile OTP / complete-profile access token TTL (jsonwebtoken expiresIn)
+JWT_APP_EXPIRES_IN=365d
 
 APP_ENV=development
 

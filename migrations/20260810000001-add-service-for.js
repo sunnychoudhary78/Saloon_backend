@@ -14,7 +14,7 @@ module.exports = {
     // Align existing services with their salon's audience (MEN/WOMEN only).
     await queryInterface.sequelize.query(`
       UPDATE "${schema}".services AS s
-      SET service_for = sal.salon_type::text
+      SET service_for = sal.salon_type::text::"${schema}"."enum_services_service_for"
       FROM "${schema}".salons AS sal
       WHERE s.salon_id = sal.id
         AND sal.salon_type::text IN ('MEN', 'WOMEN')

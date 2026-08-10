@@ -186,7 +186,7 @@ function newBooking(booking, details = {}) {
       amount,
       bookingGroupId: String(details.bookingGroupId || booking.booking_group_id || booking.id),
       actions: 'accept,reject',
-      channelId: 'catchy_urgent_bookings_v4',
+      channelId: 'catchy_urgent_bookings_v5',
       sound: 'booking_urgent',
       priority: 'max',
     },

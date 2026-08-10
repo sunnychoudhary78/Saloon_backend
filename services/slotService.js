@@ -14,6 +14,8 @@ const AppError = require('../middlewares/AppError');
 
 const PREMIUM_CONFIG_KEY = 'premium_booking_config';
 const ACTIVE_BOOKING_STATUSES = ['PENDING', 'ACCEPTED'];
+/** Bookable calendar grid step (opening → closing). */
+const SLOT_DURATION_MINUTES = 30;
 
 function parseTimeToMinutes(timeValue) {
   if (!timeValue) return null;
@@ -32,7 +34,7 @@ function minutesToTimeString(minutes) {
 function normalizeSlotStart(bookingTime) {
   const minutes = parseTimeToMinutes(bookingTime);
   if (minutes === null) return null;
-  if (minutes % 60 !== 0) return null;
+  if (minutes % SLOT_DURATION_MINUTES !== 0) return null;
   return minutesToTimeString(minutes);
 }
 
@@ -45,20 +47,27 @@ function todayDateString() {
   return formatDateOnly(new Date());
 }
 
-function generateHourlySlots(openingTime, closingTime) {
+function generateSlots(openingTime, closingTime) {
   const openMin = parseTimeToMinutes(openingTime);
   const closeMin = parseTimeToMinutes(closingTime);
   if (openMin === null || closeMin === null || closeMin <= openMin) return [];
 
   const slots = [];
-  for (let start = openMin; start + 60 <= closeMin; start += 60) {
+  for (
+    let start = openMin;
+    start + SLOT_DURATION_MINUTES <= closeMin;
+    start += SLOT_DURATION_MINUTES
+  ) {
     slots.push({
       slot_start: minutesToTimeString(start),
-      slot_end: minutesToTimeString(start + 60),
+      slot_end: minutesToTimeString(start + SLOT_DURATION_MINUTES),
     });
   }
   return slots;
 }
+
+/** @deprecated Use generateSlots — kept for callers expecting the old name. */
+const generateHourlySlots = generateSlots;
 
 function isSlotInPast(slotDate, slotStart) {
   const today = todayDateString();
@@ -180,9 +189,9 @@ async function buildSlotList(salon, date, { includeBookingDetails = false } = {}
   const inPast = (slotStart) => isSlotInPast(dateStr, slotStart);
 
   const allHourSlots = [];
-  for (let hour = 0; hour < 24; hour += 1) {
-    const slotStart = minutesToTimeString(hour * 60);
-    const slotEnd = minutesToTimeString((hour + 1) * 60);
+  for (let start = 0; start < 24 * 60; start += SLOT_DURATION_MINUTES) {
+    const slotStart = minutesToTimeString(start);
+    const slotEnd = minutesToTimeString(start + SLOT_DURATION_MINUTES);
     const inHours = baseSlots.some((s) => s.slot_start === slotStart);
     const booking = bookingBySlot.get(slotStart);
     const override = blockedBySlot.get(slotStart);
@@ -404,7 +413,7 @@ async function assertSlotBookable(salonId, date, slotStart, { isPremium = false 
 
   const normalized = normalizeSlotStart(slotStart);
   if (!normalized) {
-    throw new AppError('booking_time must be on the hour (e.g. 10:00)', 400);
+    throw new AppError('booking_time must be on a 30-minute slot (e.g. 10:00 or 10:30)', 400);
   }
 
   const dateStr = formatDateOnly(date);
@@ -462,7 +471,7 @@ async function assertSlotBookable(salonId, date, slotStart, { isPremium = false 
 
 async function assertCustomerServiceSlotFree(salonId, date, slotStart, serviceId, customerId, options = {}) {
   const normalized = normalizeSlotStart(slotStart);
-  if (!normalized) throw new AppError('booking_time must be on the hour (e.g. 10:00)', 400);
+  if (!normalized) throw new AppError('booking_time must be on a 30-minute slot (e.g. 10:00 or 10:30)', 400);
 
   const existing = await Booking.findOne({
     where: {
@@ -485,7 +494,7 @@ const assertAdditionalServiceBookable = assertCustomerServiceSlotFree;
 
 async function setSlotBlocked(salonId, slotDate, slotStart, isBlocked, note, userId) {
   const normalized = normalizeSlotStart(slotStart);
-  if (!normalized) throw new AppError('slot_start must be on the hour (e.g. 10:00)', 400);
+  if (!normalized) throw new AppError('slot_start must be on a 30-minute slot (e.g. 10:00 or 10:30)', 400);
 
   const salon = await Salon.findByPk(salonId);
   if (!salon) throw new AppError('Salon not found', 404);
@@ -538,6 +547,8 @@ async function setSlotBlocked(salonId, slotDate, slotStart, isBlocked, note, use
 
 module.exports = {
   PREMIUM_CONFIG_KEY,
+  SLOT_DURATION_MINUTES,
+  generateSlots,
   generateHourlySlots,
   normalizeSlotStart,
   formatDateOnly,

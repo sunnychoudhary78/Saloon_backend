@@ -5,11 +5,12 @@ const assert = require('node:assert/strict');
 const { Op } = require('sequelize');
 const { Service } = require('../models');
 const {
+  DUPLICATE_MESSAGE,
   assertUniqueServiceIdentity,
   mapServiceIdentityConflict,
 } = require('../services/serviceIdentityService');
 
-test('allows a service identity when no exact duplicate exists', async (t) => {
+test('allows a service identity when no name+gender duplicate exists', async (t) => {
   const originalFindOne = Service.findOne;
   t.after(() => {
     Service.findOne = originalFindOne;
@@ -20,32 +21,37 @@ test('allows a service identity when no exact duplicate exists', async (t) => {
     assertUniqueServiceIdentity({
       salonId: 'salon-1',
       serviceName: 'Haircut',
-      description: 'Premium styling',
-      price: 650,
       serviceFor: 'MEN',
     })
   );
 });
 
-test('rejects an exact duplicate with a conflict response', async (t) => {
+test('rejects the same name and gender even when price or description differ', async (t) => {
   const originalFindOne = Service.findOne;
   t.after(() => {
     Service.findOne = originalFindOne;
   });
-  Service.findOne = async () => ({ id: 'existing-service' });
+  let capturedWhere;
+  Service.findOne = async ({ where }) => {
+    capturedWhere = where;
+    return { id: 'existing-service' };
+  };
 
   await assert.rejects(
     assertUniqueServiceIdentity({
       salonId: 'salon-1',
       serviceName: ' Haircut ',
-      description: 'Premium   styling',
-      price: 650,
       serviceFor: 'MEN',
     }),
     (error) =>
       error.statusCode === 409 &&
-      error.message === 'An identical service already exists for this salon'
+      error.message === 'Haircut is already added for Men'
   );
+
+  assert.equal(capturedWhere.salon_id, 'salon-1');
+  assert.equal(capturedWhere.service_for, 'MEN');
+  assert.equal(capturedWhere.price, undefined);
+  assert.equal(capturedWhere.description, undefined);
 });
 
 test('excludes the current service while validating an update', async (t) => {
@@ -62,8 +68,6 @@ test('excludes the current service while validating an update', async (t) => {
   await assertUniqueServiceIdentity({
     salonId: 'salon-1',
     serviceName: 'Haircut',
-    description: null,
-    price: 300,
     serviceFor: 'WOMEN',
     excludeId: 'service-1',
   });
@@ -72,7 +76,7 @@ test('excludes the current service while validating an update', async (t) => {
   assert.equal(capturedWhere.service_for, 'WOMEN');
 });
 
-test('allows same name and price for different service_for values', async (t) => {
+test('allows same name for different service_for values', async (t) => {
   const originalFindOne = Service.findOne;
   t.after(() => {
     Service.findOne = originalFindOne;
@@ -86,19 +90,17 @@ test('allows same name and price for different service_for values', async (t) =>
   await assertUniqueServiceIdentity({
     salonId: 'salon-1',
     serviceName: 'Haircut',
-    description: null,
-    price: 300,
     serviceFor: 'WOMEN',
   });
 
   assert.equal(capturedWhere.service_for, 'WOMEN');
 });
 
-test('maps database uniqueness races to the same conflict response', () => {
+test('maps database uniqueness races to a conflict response', () => {
   const mapped = mapServiceIdentityConflict({
     name: 'SequelizeUniqueConstraintError',
   });
 
   assert.equal(mapped.statusCode, 409);
-  assert.equal(mapped.message, 'An identical service already exists for this salon');
+  assert.equal(mapped.message, DUPLICATE_MESSAGE);
 });

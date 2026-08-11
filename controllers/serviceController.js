@@ -86,8 +86,6 @@ exports.create = async (req, res, next) => {
     await assertUniqueServiceIdentity({
       salonId: salon_id,
       serviceName: normalizedName,
-      description: normalizedDescription,
-      price,
       serviceFor: resolvedServiceFor,
     });
     const row = await Service.create({
@@ -133,8 +131,6 @@ exports.update = async (req, res, next) => {
     await assertUniqueServiceIdentity({
       salonId: row.salon_id,
       serviceName: row.service_name,
-      description: row.description,
-      price: row.price,
       serviceFor: row.service_for,
       excludeId: row.id,
     });

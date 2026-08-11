@@ -31,6 +31,8 @@ const {
   validateUnregisterDeviceToken,
 } = require('../validators/deviceTokenValidator');
 const deviceTokenCtrl = require('../controllers/deviceTokenController');
+const favoriteCtrl = require('../controllers/favoriteController');
+const { validateCreateFavorite } = require('../validators/favoriteValidator');
 const notificationCtrl = require('../controllers/notificationController');
 const { validateListNotifications } = require('../validators/notificationValidator');
 const { uploadSalonImages, uploadProfileImage, uploadStaffImage } = require('../middlewares/upload');
@@ -94,6 +96,9 @@ router.post('/payments/razorpay/order', authMiddleware, roleMiddleware(['CUSTOME
 router.post('/payments/razorpay/verify', authMiddleware, roleMiddleware(['CUSTOMER']), validateVerifyRazorpayPayment, asyncHandler(ctrl.verifyRazorpayPayment));
 router.post('/payments/pay-at-shop', authMiddleware, roleMiddleware(['CUSTOMER']), validatePayAtShop, asyncHandler(ctrl.selectPayAtShop));
 router.post('/reviews', authMiddleware, roleMiddleware(['CUSTOMER']), validateReview, asyncHandler(ctrl.createReview));
+router.get('/favorites', authMiddleware, roleMiddleware(['CUSTOMER']), asyncHandler(favoriteCtrl.listFavorites));
+router.post('/favorites', authMiddleware, roleMiddleware(['CUSTOMER']), validateCreateFavorite, asyncHandler(favoriteCtrl.addFavorite));
+router.delete('/favorites/:salonId', authMiddleware, roleMiddleware(['CUSTOMER']), asyncHandler(favoriteCtrl.removeFavorite));
 
 // Salon owner registration & applications
 router.post('/salon-owner/register', authMiddleware, asyncHandler(ctrl.registerSalonOwner));

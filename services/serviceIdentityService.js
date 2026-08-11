@@ -4,21 +4,32 @@ const { Op, fn, col, where } = require('sequelize');
 const { Service } = require('../models');
 const AppError = require('../middlewares/AppError');
 
-const DUPLICATE_MESSAGE = 'An identical service already exists for this salon';
+const DUPLICATE_MESSAGE = 'This service is already added for this gender';
 const SERVICE_FOR_VALUES = ['MEN', 'WOMEN', 'UNISEX'];
 
 function normalizeText(value) {
   return String(value ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
-function normalizeDescription(value) {
-  const normalized = normalizeText(value);
-  return normalized || '';
-}
-
 function normalizeServiceFor(value) {
   const normalized = String(value ?? '').trim().toUpperCase();
   return SERVICE_FOR_VALUES.includes(normalized) ? normalized : null;
+}
+
+function displayServiceName(serviceName) {
+  const display = String(serviceName ?? '').trim().replace(/\s+/g, ' ');
+  return display || 'This service';
+}
+
+function serviceForLabel(serviceFor) {
+  const normalized = normalizeServiceFor(serviceFor) || 'UNISEX';
+  if (normalized === 'MEN') return 'Men';
+  if (normalized === 'WOMEN') return 'Women';
+  return 'Everyone';
+}
+
+function duplicateServiceMessage(serviceName, serviceFor) {
+  return `${displayServiceName(serviceName)} is already added for ${serviceForLabel(serviceFor)}`;
 }
 
 /**
@@ -49,8 +60,6 @@ function resolveServiceFor({ salonType, requested, existing = null, isCreate = f
 async function assertUniqueServiceIdentity({
   salonId,
   serviceName,
-  description,
-  price,
   serviceFor,
   excludeId = null,
   transaction = null,
@@ -58,20 +67,11 @@ async function assertUniqueServiceIdentity({
   const normalizedServiceFor = normalizeServiceFor(serviceFor) || 'UNISEX';
   const conditions = {
     salon_id: salonId,
-    price,
     service_for: normalizedServiceFor,
     [Op.and]: [
       where(
         fn('lower', fn('regexp_replace', fn('btrim', col('service_name')), '\\s+', ' ', 'g')),
         normalizeText(serviceName)
-      ),
-      where(
-        fn(
-          'coalesce',
-          fn('lower', fn('regexp_replace', fn('btrim', col('description')), '\\s+', ' ', 'g')),
-          ''
-        ),
-        normalizeDescription(description)
       ),
     ],
   };
@@ -83,7 +83,9 @@ async function assertUniqueServiceIdentity({
     where: conditions,
     transaction,
   });
-  if (duplicate) throw new AppError(DUPLICATE_MESSAGE, 409);
+  if (duplicate) {
+    throw new AppError(duplicateServiceMessage(serviceName, normalizedServiceFor), 409);
+  }
 }
 
 function mapServiceIdentityConflict(error) {
@@ -95,8 +97,10 @@ function mapServiceIdentityConflict(error) {
 
 module.exports = {
   SERVICE_FOR_VALUES,
+  DUPLICATE_MESSAGE,
   normalizeServiceFor,
   resolveServiceFor,
+  duplicateServiceMessage,
   assertUniqueServiceIdentity,
   mapServiceIdentityConflict,
 };

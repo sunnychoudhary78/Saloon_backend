@@ -54,6 +54,7 @@ module.exports = (sequelize, DataTypes) => {
     Salon.hasMany(models.SalonStaff, { foreignKey: 'salon_id', as: 'staff' });
     Salon.hasMany(models.Booking, { foreignKey: 'salon_id', as: 'bookings' });
     Salon.hasMany(models.Review, { foreignKey: 'salon_id', as: 'reviews' });
+    Salon.hasMany(models.CustomerFavorite, { foreignKey: 'salon_id', as: 'favorites' });
     Salon.hasMany(models.Payment, { foreignKey: 'salon_id', as: 'payments' });
   };
 

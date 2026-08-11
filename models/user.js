@@ -39,6 +39,7 @@ module.exports = (sequelize, DataTypes) => {
     User.hasMany(models.Draft, { foreignKey: 'user_id' });
     User.hasMany(models.DeviceToken, { foreignKey: 'user_id', as: 'device_tokens' });
     User.hasMany(models.UserNotification, { foreignKey: 'user_id', as: 'notifications' });
+    User.hasMany(models.CustomerFavorite, { foreignKey: 'user_id', as: 'favorites' });
   };
 
   return User;

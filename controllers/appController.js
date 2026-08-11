@@ -23,7 +23,8 @@ const {
   sequelize,
 } = require('../models');
 const AppError = require('../middlewares/AppError');
-const { generateToken, loadUserWithRoles, shapeUserResponse, getRoleNames } = require('../utils/authHelpers');
+const { generateToken, loadUserWithRoles, shapeUserResponse, getRoleNames, hasAnyRole } = require('../utils/authHelpers');
+const { listFavoriteSalonIds, isSalonFavorited } = require('../services/favoriteService');
 const {
   normalizePhone,
   generateOtp,
@@ -754,6 +755,7 @@ function shapeBrowseSalonRows(salons, {
   discountMap,
   serviceSalonIds,
   userCoords,
+  favoriteIds = new Set(),
 }) {
   return salons.map((salonJson) => {
     if (userCoords) {
@@ -772,8 +774,15 @@ function shapeBrowseSalonRows(salons, {
       },
       hasServices: serviceSalonIds.has(salonJson.id),
       userCoords,
+      isFavorite: favoriteIds.has(salonJson.id),
     });
   });
+}
+
+async function favoriteIdSetForRequest(req, salonIds) {
+  if (!hasAnyRole(req.user, ['CUSTOMER']) || !salonIds.length) return new Set();
+  const ids = await listFavoriteSalonIds(req.user.id, salonIds);
+  return new Set(ids);
 }
 
 exports.browseSalons = async (req, res, next) => {
@@ -875,10 +884,11 @@ exports.browseSalons = async (req, res, next) => {
       salons = filtered.slice(offset, offset + limit);
 
       const salonIds = salons.map((salon) => salon.id);
-      const [ratingMap, discountMap, serviceSalonIds] = await Promise.all([
+      const [ratingMap, discountMap, serviceSalonIds, favoriteIds] = await Promise.all([
         getBatchSalonRatingSummaries(salonIds),
         getBatchDiscountFlags(salonIds),
         getSalonIdsWithActiveServices(salonIds),
+        favoriteIdSetForRequest(req, salonIds),
       ]);
 
       const data = shapeBrowseSalonRows(salons, {
@@ -887,6 +897,7 @@ exports.browseSalons = async (req, res, next) => {
         discountMap,
         serviceSalonIds,
         userCoords,
+        favoriteIds,
       });
 
       return res.json({
@@ -916,11 +927,13 @@ exports.browseSalons = async (req, res, next) => {
       slotsMap,
       discountMap,
       serviceSalonIds,
+      favoriteIds,
     ] = await Promise.all([
       getBatchSalonRatingSummaries(salonIds),
       getBatchTodayAvailabilitySummaries(salonPlain),
       getBatchDiscountFlags(salonIds),
       getSalonIdsWithActiveServices(salonIds),
+      favoriteIdSetForRequest(req, salonIds),
     ]);
 
     const data = shapeBrowseSalonRows(salonPlain, {
@@ -929,6 +942,7 @@ exports.browseSalons = async (req, res, next) => {
       discountMap,
       serviceSalonIds,
       userCoords,
+      favoriteIds,
     });
 
     res.json({
@@ -997,6 +1011,9 @@ exports.getSalon = async (req, res, next) => {
     data.gallery_images = shapeGalleryForDetail(data.gallery_images);
     data = shapeDiscountSummary(data);
     data.street = data.address || '';
+    data.is_favorite = hasAnyRole(req.user, ['CUSTOMER'])
+      ? await isSalonFavorited(req.user.id, salon.id)
+      : false;
     res.json({ data });
   } catch (err) {
     next(err);
@@ -1685,8 +1702,6 @@ exports.createOwnerService = async (req, res, next) => {
     await assertUniqueServiceIdentity({
       salonId: req.params.salonId,
       serviceName: payload.service_name,
-      description: payload.description,
-      price: payload.price,
       serviceFor: payload.service_for,
     });
     const service = await Service.create({
@@ -1716,8 +1731,6 @@ exports.updateOwnerService = async (req, res, next) => {
     await assertUniqueServiceIdentity({
       salonId: req.params.salonId,
       serviceName: service.service_name,
-      description: service.description,
-      price: service.price,
       serviceFor: service.service_for,
       excludeId: service.id,
     });

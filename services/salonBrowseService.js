@@ -84,6 +84,7 @@ function shapeBrowseSalonDto(
     discountFlags,
     hasServices,
     userCoords,
+    isFavorite = false,
   },
 ) {
   const distanceJson = userCoords
@@ -113,6 +114,7 @@ function shapeBrowseSalonDto(
     max_savings_percent: discountFlags.max_savings_percent,
     has_services: hasServices,
     is_featured: Boolean(salonJson.is_featured),
+    is_favorite: Boolean(isFavorite),
     preview_images: buildPreviewImages(
       salonJson.cover_image,
       salonJson.gallery_images,

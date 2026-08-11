@@ -13,6 +13,7 @@ async function listFavoriteSalonIds(userId, salonIds = null) {
   const rows = await CustomerFavorite.findAll({
     where,
     attributes: ['salon_id'],
+    order: [['created_at', 'DESC']],
     raw: true,
   });
   return rows.map((row) => row.salon_id);

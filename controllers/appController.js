@@ -85,8 +85,7 @@ const {
 const {
   getBatchDiscountFlags,
   getSalonIdsWithActiveServices,
-  shapeBrowseSalonDto,
-  emptyRatingSummary,
+  shapeBrowseSalonRows,
   discountedSalonExistsLiteral,
   minRatingSalonExistsLiteral,
   filterAndSortSalonsByAvailability,
@@ -748,36 +747,6 @@ exports.getOwnerSalonApplications = async (req, res, next) => {
     next(err);
   }
 };
-
-function shapeBrowseSalonRows(salons, {
-  ratingMap,
-  slotsMap,
-  discountMap,
-  serviceSalonIds,
-  userCoords,
-  favoriteIds = new Set(),
-}) {
-  return salons.map((salonJson) => {
-    if (userCoords) {
-      attachDistance(salonJson, userCoords.userLat, userCoords.userLng);
-    } else {
-      shapeSalonDistanceFields(salonJson);
-    }
-
-    return shapeBrowseSalonDto(salonJson, {
-      ratingSummary: ratingMap.get(salonJson.id) || emptyRatingSummary(),
-      slotsToday: slotsMap.get(salonJson.id) || { total: 0, available: 0, status: 'unknown' },
-      discountFlags: discountMap.get(salonJson.id) || {
-        has_discount: false,
-        discounted_services_count: 0,
-        max_savings_percent: 0,
-      },
-      hasServices: serviceSalonIds.has(salonJson.id),
-      userCoords,
-      isFavorite: favoriteIds.has(salonJson.id),
-    });
-  });
-}
 
 async function favoriteIdSetForRequest(req, salonIds) {
   if (!hasAnyRole(req.user, ['CUSTOMER']) || !salonIds.length) return new Set();

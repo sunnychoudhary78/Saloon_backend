@@ -5,6 +5,16 @@ const { Service } = require('../models');
 const {
   buildPreviewImages,
 } = require('./imageProcessingService');
+const {
+  getBatchSalonRatingSummaries,
+} = require('./reviewService');
+const {
+  getBatchTodayAvailabilitySummaries,
+} = require('./slotService');
+const {
+  attachDistance,
+  shapeSalonDistanceFields,
+} = require('./locationService');
 
 async function getBatchDiscountFlags(salonIds) {
   const flags = new Map();
@@ -172,10 +182,61 @@ function filterAndSortSalonsByAvailability(salons, slotsMap, { userCoords } = {}
   return filtered;
 }
 
+function shapeBrowseSalonRows(salons, {
+  ratingMap,
+  slotsMap,
+  discountMap,
+  serviceSalonIds,
+  userCoords,
+  favoriteIds = new Set(),
+}) {
+  return salons.map((salonJson) => {
+    if (userCoords) {
+      attachDistance(salonJson, userCoords.userLat, userCoords.userLng);
+    } else {
+      shapeSalonDistanceFields(salonJson);
+    }
+
+    return shapeBrowseSalonDto(salonJson, {
+      ratingSummary: ratingMap.get(salonJson.id) || emptyRatingSummary(),
+      slotsToday: slotsMap.get(salonJson.id) || { total: 0, available: 0, status: 'unknown' },
+      discountFlags: discountMap.get(salonJson.id) || {
+        has_discount: false,
+        discounted_services_count: 0,
+        max_savings_percent: 0,
+      },
+      hasServices: serviceSalonIds.has(salonJson.id),
+      userCoords,
+      isFavorite: favoriteIds.has(salonJson.id),
+    });
+  });
+}
+
+async function buildBrowseSalonCards(salons, { userCoords = null, favoriteIds = new Set() } = {}) {
+  const salonIds = salons.map((salon) => salon.id);
+  const [ratingMap, slotsMap, discountMap, serviceSalonIds] = await Promise.all([
+    getBatchSalonRatingSummaries(salonIds),
+    getBatchTodayAvailabilitySummaries(salons),
+    getBatchDiscountFlags(salonIds),
+    getSalonIdsWithActiveServices(salonIds),
+  ]);
+
+  return shapeBrowseSalonRows(salons, {
+    ratingMap,
+    slotsMap,
+    discountMap,
+    serviceSalonIds,
+    userCoords,
+    favoriteIds,
+  });
+}
+
 module.exports = {
   getBatchDiscountFlags,
   getSalonIdsWithActiveServices,
   shapeBrowseSalonDto,
+  shapeBrowseSalonRows,
+  buildBrowseSalonCards,
   emptyRatingSummary,
   discountedSalonExistsLiteral,
   minRatingSalonExistsLiteral,

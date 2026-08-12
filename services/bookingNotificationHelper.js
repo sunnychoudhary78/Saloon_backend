@@ -180,6 +180,18 @@ function notifyPremiumPayment(bookingId) {
   }).catch((err) => console.error('[push] notifyPremiumPayment:', err.message));
 }
 
+function notifyPayAtShopSelected(bookingId, amount) {
+  loadBookingContext(bookingId).then((booking) => {
+    if (!booking) return;
+    const userId = ownerUserId(booking);
+    if (!userId) return;
+    sendToUserAsync(
+      userId,
+      templates.payAtShopSelected(booking, customerName(booking), amount || '0'),
+    );
+  }).catch((err) => console.error('[push] notifyPayAtShopSelected:', err.message));
+}
+
 module.exports = {
   notifyNewBooking,
   notifyBookingConfirmed,
@@ -189,4 +201,5 @@ module.exports = {
   notifyBookingCompleted,
   notifyPremiumPayment,
   notifyBookingPayment,
+  notifyPayAtShopSelected,
 };

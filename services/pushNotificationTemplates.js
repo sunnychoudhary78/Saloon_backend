@@ -8,6 +8,7 @@ const NOTIFICATION_TYPES = {
   PROMOTIONAL_OFFER: 'promotional_offer',
   NEW_BOOKING: 'new_booking',
   PAYMENT_RECEIVED: 'payment_received',
+  PAY_AT_SHOP_SELECTED: 'pay_at_shop_selected',
   SALON_APPLICATION_SUBMITTED: 'salon_application_submitted',
   SALON_APPLICATION_APPROVED: 'salon_application_approved',
   SALON_APPLICATION_REJECTED: 'salon_application_rejected',
@@ -204,6 +205,22 @@ function paymentReceived(booking, customerName, amount) {
   });
 }
 
+function payAtShopSelected(booking, customerName, amount) {
+  const amountPart = amount ? ` · ₹${amount}` : '';
+  return buildPayload({
+    type: NOTIFICATION_TYPES.PAY_AT_SHOP_SELECTED,
+    title: 'Pay at salon selected',
+    body: `${customerName} will pay at the salon${amountPart}. Confirm cash when received.`,
+    bookingId: booking.id,
+    salonId: booking.salon_id || booking.salon?.id,
+    screen: SCREENS.OWNER_BOOKING_DETAILS,
+    userRole: 'salon_owner',
+    extraData: {
+      bookingGroupId: String(booking.booking_group_id || booking.id),
+    },
+  });
+}
+
 function salonApplicationSubmitted(application) {
   const name = application.salon_name || 'your salon';
   const label = applicationLabel(application.application_type);
@@ -288,6 +305,7 @@ module.exports = {
   promotionalOffer,
   newBooking,
   paymentReceived,
+  payAtShopSelected,
   salonApplicationSubmitted,
   salonApplicationApproved,
   salonApplicationRejected,

@@ -56,6 +56,7 @@ const {
   notifyBookingCancelledForOwner,
   notifyBookingRejected,
   notifyBookingCompleted,
+  notifyPayAtShopSelected,
 } = require('../services/bookingNotificationHelper');
 const { notifySalonApplicationSubmitted } = require('../services/salonApplicationNotificationHelper');
 const { notifyNewReview } = require('../services/reviewNotificationHelper');
@@ -1448,6 +1449,8 @@ exports.selectPayAtShop = async (req, res, next) => {
     committed = true;
 
     const primary = bookings[0];
+    notifyPayAtShopSelected(primary.id, payment.amount);
+
     const fullBooking = await Booking.findByPk(primary.id, {
       include: [
         customerSalonInclude(),

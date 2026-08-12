@@ -58,11 +58,11 @@ async function loadPaymentById(paymentId, transaction) {
 
 function dispatchPaymentNotifications(notifications) {
   if (!notifications) return;
-  if (notifications.premiumBookingId) {
-    notifyPremiumPayment(notifications.premiumBookingId);
-  }
+  // COMBINED sets both premium + salonFee; one push covers the paid checkout.
   if (notifications.salonFee) {
     notifyBookingPayment(notifications.salonFee.bookingId, notifications.salonFee.amount);
+  } else if (notifications.premiumBookingId) {
+    notifyPremiumPayment(notifications.premiumBookingId);
   }
 }
 

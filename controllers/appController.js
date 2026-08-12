@@ -125,6 +125,7 @@ const {
   fulfillCashPayment,
 } = require('../services/paymentFulfillmentService');
 const { encryptAccountNumber, maskAccountNumber } = require('../utils/payoutEncryption');
+const { visitKeyFromRow } = require('../services/ownerDashboard/visitKey');
 
 function isSalonActive(salon) {
   return salon.status === 'ACTIVE' && salon.is_active === true;
@@ -151,6 +152,53 @@ function paymentInclude() {
     required: false,
     include: [{ model: PaymentLineItem, as: 'line_items', required: false }],
   };
+}
+
+// Group checkout stores salon-fee payments on the primary booking_id only.
+// Sibling rows in a multi-service visit have empty payments via booking_id
+// include — merge visit-level payments so every row gets correct cash flags.
+async function attachVisitPayments(bookings) {
+  if (!bookings || bookings.length === 0) return [];
+
+  const plains = bookings.map((booking) => (
+    typeof booking.get === 'function' ? booking.get({ plain: true }) : { ...booking }
+  ));
+  const visitKeys = [...new Set(plains.map((row) => visitKeyFromRow(row)))];
+  const bookingIds = plains.map((row) => row.id);
+
+  const payments = await Payment.findAll({
+    where: {
+      status: { [Op.in]: ['PENDING', 'PAID'] },
+      [Op.or]: [
+        { booking_group_id: { [Op.in]: visitKeys } },
+        { booking_id: { [Op.in]: bookingIds } },
+      ],
+    },
+    include: [{ model: PaymentLineItem, as: 'line_items', required: false }],
+  });
+
+  const paymentsByVisit = new Map();
+  for (const payment of payments) {
+    const plain = typeof payment.get === 'function' ? payment.get({ plain: true }) : payment;
+    const keys = new Set();
+    if (plain.booking_group_id) keys.add(plain.booking_group_id);
+    if (plain.booking_id) keys.add(plain.booking_id);
+    for (const key of keys) {
+      if (!paymentsByVisit.has(key)) paymentsByVisit.set(key, []);
+      paymentsByVisit.get(key).push(plain);
+    }
+  }
+
+  return plains.map((row) => {
+    const visitId = visitKeyFromRow(row);
+    const visitPayments = paymentsByVisit.get(visitId) || [];
+    const byBookingId = paymentsByVisit.get(row.id) || [];
+    const merged = new Map();
+    for (const payment of [...(row.payments || []), ...visitPayments, ...byBookingId]) {
+      if (payment?.id != null) merged.set(payment.id, payment);
+    }
+    return { ...row, payments: [...merged.values()] };
+  });
 }
 
 function hasPremiumFee(booking) {
@@ -1188,7 +1236,8 @@ exports.getMyBookings = async (req, res, next) => {
       order: [['booking_date', 'DESC'], ['booking_time', 'DESC']],
     });
 
-    const data = bookings.map((booking) => {
+    const withVisitPayments = await attachVisitPayments(bookings);
+    const data = withVisitPayments.map((booking) => {
       const plain = shapeCustomerBooking(booking);
       const flags = shapeBookingReviewFlags(booking, plain.service, plain.review);
       return { ...plain, ...flags };
@@ -1783,7 +1832,8 @@ exports.getOwnerBookings = async (req, res, next) => {
       ],
       order: [['created_at', 'DESC']],
     });
-    res.json({ data: bookings.map(shapeBookingWithPayments) });
+    const withVisitPayments = await attachVisitPayments(bookings);
+    res.json({ data: withVisitPayments.map(shapeBookingWithPayments) });
   } catch (err) {
     next(err);
   }

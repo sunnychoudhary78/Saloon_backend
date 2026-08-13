@@ -277,6 +277,40 @@ function shapeBookingReviewFlags(booking, service, review) {
   };
 }
 
+function visitReviewKey(row) {
+  return row?.booking_group_id || row?.id;
+}
+
+/** Booking ids that share a visit with `booking` (legacy rows are themselves). */
+function visitBookingIds(booking, groupRows) {
+  if (!booking) return [];
+  if (!booking.booking_group_id) return booking.id ? [booking.id] : [];
+  const ids = new Set();
+  if (booking.id) ids.add(booking.id);
+  for (const row of groupRows || []) {
+    if (row?.id) ids.add(row.id);
+  }
+  return [...ids];
+}
+
+/**
+ * One review covers a multi-service visit. If any sibling has a review,
+ * every row in that booking_group_id is marked reviewed and not rateable.
+ */
+function applyVisitReviewFlags(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return rows || [];
+
+  const reviewedVisits = new Set();
+  for (const row of rows) {
+    if (row?.has_review) reviewedVisits.add(visitReviewKey(row));
+  }
+
+  return rows.map((row) => {
+    if (!reviewedVisits.has(visitReviewKey(row))) return row;
+    return { ...row, has_review: true, can_review: false };
+  });
+}
+
 module.exports = {
   REVIEWABLE_STATUSES,
   DEFAULT_SLOT_DURATION_MINUTES,
@@ -298,5 +332,8 @@ module.exports = {
   attachRatingSummary,
   shapePublicReview,
   shapeBookingReviewFlags,
+  visitReviewKey,
+  visitBookingIds,
+  applyVisitReviewFlags,
   maskCustomerName,
 };

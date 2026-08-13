@@ -7,6 +7,8 @@ const {
   getSlotEndDateTime,
   hasSlotEnded,
   isBookingReviewable,
+  applyVisitReviewFlags,
+  visitBookingIds,
 } = require('../services/reviewService');
 
 test('normalizeBookingDate handles ISO strings and Date objects', () => {
@@ -71,3 +73,47 @@ test('CANCELLED and PENDING are not reviewable', () => {
     false,
   );
 });
+
+test('applyVisitReviewFlags marks every sibling reviewed when one has a review', () => {
+  const rows = applyVisitReviewFlags([
+    {
+      id: 'a',
+      booking_group_id: 'g1',
+      has_review: true,
+      can_review: false,
+    },
+    {
+      id: 'b',
+      booking_group_id: 'g1',
+      has_review: false,
+      can_review: true,
+    },
+  ]);
+  assert.equal(rows[0].has_review, true);
+  assert.equal(rows[0].can_review, false);
+  assert.equal(rows[1].has_review, true);
+  assert.equal(rows[1].can_review, false);
+});
+
+test('applyVisitReviewFlags leaves other visits unchanged', () => {
+  const rows = applyVisitReviewFlags([
+    { id: 'a', booking_group_id: 'g1', has_review: true, can_review: false },
+    { id: 'c', booking_group_id: 'g2', has_review: false, can_review: true },
+    { id: 'legacy', has_review: false, can_review: true },
+  ]);
+  assert.equal(rows[1].has_review, false);
+  assert.equal(rows[1].can_review, true);
+  assert.equal(rows[2].has_review, false);
+  assert.equal(rows[2].can_review, true);
+});
+
+test('visitBookingIds includes siblings for duplicate-visit rejection', () => {
+  const booking = { id: 'b', booking_group_id: 'g1' };
+  const ids = visitBookingIds(booking, [{ id: 'a' }, { id: 'b' }, { id: 'c' }]);
+  assert.deepEqual([...ids].sort(), ['a', 'b', 'c']);
+});
+
+test('visitBookingIds for a legacy row is only itself', () => {
+  assert.deepEqual(visitBookingIds({ id: 'solo' }, [{ id: 'other' }]), ['solo']);
+});
+

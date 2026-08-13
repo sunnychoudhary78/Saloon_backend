@@ -83,6 +83,8 @@ const {
   attachAndSortStaffByRating,
   isBookingReviewable,
   shapeBookingReviewFlags,
+  applyVisitReviewFlags,
+  visitBookingIds,
   shapePublicReview,
   PUBLIC_REVIEW_WHERE,
 } = require('../services/reviewService');
@@ -1385,11 +1387,11 @@ exports.getMyBookings = async (req, res, next) => {
     });
 
     const withVisitPayments = await attachVisitPayments(bookings);
-    const data = withVisitPayments.map((booking) => {
+    const data = applyVisitReviewFlags(withVisitPayments.map((booking) => {
       const plain = shapeCustomerBooking(booking);
       const flags = shapeBookingReviewFlags(booking, plain.service, plain.review);
       return { ...plain, ...flags };
-    });
+    }));
 
     res.json({ data });
   } catch (err) {
@@ -1680,16 +1682,25 @@ exports.createReview = async (req, res, next) => {
 
     const { booking_id, rating, staff_rating: staffRatingBody, review } = req.body;
 
-    const existingReview = await Review.findOne({ where: { booking_id } });
-    if (existingReview) {
-      throw new AppError('You have already reviewed this booking', 409);
-    }
-
     const booking = await Booking.findOne({
       where: { id: booking_id, customer_id: customer.id },
       include: [{ model: Service, as: 'service' }],
     });
     if (!booking) throw new AppError('Booking not found', 404);
+
+    const groupRows = booking.booking_group_id
+      ? await Booking.findAll({
+          where: { booking_group_id: booking.booking_group_id, customer_id: customer.id },
+          attributes: ['id'],
+        })
+      : [booking];
+    const visitIds = visitBookingIds(booking, groupRows);
+    const existingReview = visitIds.length
+      ? await Review.findOne({ where: { booking_id: { [Op.in]: visitIds } } })
+      : null;
+    if (existingReview) {
+      throw new AppError('You have already reviewed this booking', 409);
+    }
 
     if (!isBookingReviewable(booking, booking.service, null)) {
       throw new AppError('You can review this booking after your appointment slot ends', 400);

@@ -18,15 +18,10 @@ const {
 } = require('../utils/authHelpers');
 const {
   normalizePhone,
-  generateOtp,
-  getOtpExpiryDate,
   isOtpExpired,
-  checkRequestCooldown,
-  markOtpRequested,
-  sanitizeOtpDeliveryError,
   MAX_VERIFY_ATTEMPTS,
 } = require('../utils/otpHelpers');
-const { sendOtpSms } = require('../utils/smsService');
+const { requestOtpSms, OTP_PURPOSE } = require('../services/otpUsageService');
 
 async function assignCustomerRole(userId, transaction) {
   const role = await Role.findOne({ where: { name: 'CUSTOMER' }, transaction });
@@ -40,41 +35,7 @@ async function assignCustomerRole(userId, transaction) {
 
 exports.otpRequest = async (req, res, next) => {
   try {
-    const phone = normalizePhone(req.body.phone);
-    if (!phone) throw new AppError('Invalid phone number. Enter exactly 10 digits.', 400);
-
-    const cooldown = checkRequestCooldown(phone);
-    if (!cooldown.allowed) {
-      throw new AppError(`Please wait ${cooldown.waitSec} seconds before requesting another OTP`, 429);
-    }
-
-    const otp = generateOtp();
-    const otpExpiresAt = getOtpExpiryDate();
-
-    await PhoneOtpSession.upsert(
-      {
-        phone,
-        otp,
-        otp_expires_at: otpExpiresAt,
-        attempt_count: 0,
-        updated_at: new Date(),
-      },
-      { returning: true }
-    );
-
-    if (process.env.NODE_ENV !== 'production') {
-      console.log(`[OTP] phone=${phone} otp=${otp} expires=${otpExpiresAt.toISOString()}`);
-    }
-
-    try {
-      await sendOtpSms(phone, otp);
-    } catch (smsErr) {
-      await PhoneOtpSession.destroy({ where: { phone } });
-      throw new AppError(sanitizeOtpDeliveryError(smsErr), 500);
-    }
-
-    markOtpRequested(phone);
-
+    await requestOtpSms({ phone: req.body.phone, purpose: OTP_PURPOSE.LOGIN });
     res.json({ message: 'OTP sent successfully' });
   } catch (err) {
     next(err);

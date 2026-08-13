@@ -27,15 +27,10 @@ const { generateToken, loadUserWithRoles, shapeUserResponse, getRoleNames, hasAn
 const { listFavoriteSalonIds, isSalonFavorited } = require('../services/favoriteService');
 const {
   normalizePhone,
-  generateOtp,
-  getOtpExpiryDate,
   isOtpExpired,
-  checkRequestCooldown,
-  markOtpRequested,
-  sanitizeOtpDeliveryError,
   MAX_VERIFY_ATTEMPTS,
 } = require('../utils/otpHelpers');
-const { sendOtpSms } = require('../utils/smsService');
+const { requestOtpSms, OTP_PURPOSE } = require('../services/otpUsageService');
 const { getSalonOwnerForUser, assertSalonOwnership } = require('../utils/ownershipGuard');
 const { generateBookingNumber, canTransition } = require('../services/bookingService');
 const {
@@ -593,37 +588,7 @@ exports.requestPhoneChangeOtp = async (req, res, next) => {
     });
     if (taken) throw new AppError('This phone number is already registered', 409);
 
-    const cooldown = checkRequestCooldown(phone);
-    if (!cooldown.allowed) {
-      throw new AppError(`Please wait ${cooldown.waitSec} seconds before requesting another OTP`, 429);
-    }
-
-    const otp = generateOtp();
-    const otpExpiresAt = getOtpExpiryDate();
-
-    await PhoneOtpSession.upsert(
-      {
-        phone,
-        otp,
-        otp_expires_at: otpExpiresAt,
-        attempt_count: 0,
-        updated_at: new Date(),
-      },
-      { returning: true }
-    );
-
-    if (process.env.NODE_ENV !== 'production') {
-      console.log(`[OTP phone-change] user=${user.id} phone=${phone} otp=${otp}`);
-    }
-
-    try {
-      await sendOtpSms(phone, otp);
-    } catch (smsErr) {
-      await PhoneOtpSession.destroy({ where: { phone } });
-      throw new AppError(sanitizeOtpDeliveryError(smsErr), 500);
-    }
-
-    markOtpRequested(phone);
+    await requestOtpSms({ phone, purpose: OTP_PURPOSE.PHONE_CHANGE });
     res.json({ message: 'OTP sent successfully' });
   } catch (err) {
     next(err);

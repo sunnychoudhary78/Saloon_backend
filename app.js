@@ -72,6 +72,7 @@ app.use(
   require("./routes/promotionalBannerRoutes"),
 );
 app.use("/api/platform-settings", require("./routes/platformSettingRoutes"));
+app.use("/api/otp-usage", require("./routes/otpUsageRoutes"));
 app.use("/api/finance-settings", require("./routes/financeSettingsRoutes"));
 app.use("/api/payments", require("./routes/paymentRoutes"));
 app.use("/api/settlements", require("./routes/settlementRoutes"));

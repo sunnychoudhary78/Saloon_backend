@@ -140,11 +140,40 @@ function bookingCancelledOwner(booking, customerName) {
   });
 }
 
+function formatRupees(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '0';
+  return Number.isInteger(num) ? String(num) : num.toFixed(2);
+}
+
 function paymentSuccessful(booking, salonName, amount) {
   return buildPayload({
     type: NOTIFICATION_TYPES.PAYMENT_SUCCESSFUL,
     title: 'Payment Successful',
     body: `Payment of ₹${amount} for ${salonName} was successful.`,
+    bookingId: booking.id,
+    screen: SCREENS.BOOKING_DETAILS,
+    userRole: 'customer',
+  });
+}
+
+function cashConfirmed(booking, salonName, {
+  bookedAmount,
+  confirmedAmount,
+  extraAmount = 0,
+} = {}) {
+  const booked = formatRupees(bookedAmount);
+  const total = formatRupees(
+    confirmedAmount != null && confirmedAmount !== '' ? confirmedAmount : bookedAmount,
+  );
+  const extra = formatRupees(extraAmount);
+  const hasExtra = Number(extraAmount) > 0;
+  return buildPayload({
+    type: NOTIFICATION_TYPES.PAYMENT_SUCCESSFUL,
+    title: hasExtra ? 'Extra cash recorded' : 'Cash confirmed',
+    body: hasExtra
+      ? `${salonName} confirmed ₹${total} cash (₹${extra} extra on the booked ₹${booked}).`
+      : `${salonName} confirmed cash of ₹${booked}.`,
     bookingId: booking.id,
     screen: SCREENS.BOOKING_DETAILS,
     userRole: 'customer',
@@ -170,10 +199,13 @@ function newBooking(booking, details = {}) {
   const when = [bookingDate, bookingTime].filter(Boolean).join(' ');
   const amountPart = amount ? ` · ₹${amount}` : '';
   const body = `${customerName} · ${serviceName}${when ? ` · ${when}` : ''}${amountPart}`;
+  const isPremium = details.isPremium === true
+    || details.isPremium === 'true'
+    || booking.booking_type === 'PREMIUM';
 
   return buildPayload({
     type: NOTIFICATION_TYPES.NEW_BOOKING,
-    title: 'New Booking Request',
+    title: isPremium ? 'Urgent booking request' : 'New Booking Request',
     body,
     bookingId: booking.id,
     salonId: details.salonId || booking.salon_id || booking.salon?.id,
@@ -186,6 +218,7 @@ function newBooking(booking, details = {}) {
       bookingTime: String(bookingTime || ''),
       amount,
       bookingGroupId: String(details.bookingGroupId || booking.booking_group_id || booking.id),
+      isPremium: isPremium ? 'true' : 'false',
       actions: 'accept,reject',
       channelId: 'catchy_urgent_bookings_v5',
       sound: 'booking_urgent',
@@ -302,6 +335,7 @@ module.exports = {
   bookingCancelledCustomer,
   bookingCancelledOwner,
   paymentSuccessful,
+  cashConfirmed,
   promotionalOffer,
   newBooking,
   paymentReceived,

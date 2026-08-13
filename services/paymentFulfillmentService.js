@@ -13,6 +13,7 @@ const { markExpired, resolveCashConfirmedAmount, cashExtraAmount } = require('./
 const {
   notifyPremiumPayment,
   notifyBookingPayment,
+  notifyCashConfirmed,
 } = require('./bookingNotificationHelper');
 
 const CUSTOMER_SALON_ATTRS = ['id', 'salon_name', 'city', 'phone'];
@@ -56,11 +57,29 @@ async function loadPaymentById(paymentId, transaction) {
   });
 }
 
+function cashSalonFeeNotification(payment, { notifyOwner = true } = {}) {
+  const booked = Number(payment.amount) || 0;
+  const confirmed = Number(payment.cash_confirmed_amount) || booked;
+  return {
+    bookingId: payment.booking_id,
+    cash: true,
+    notifyOwner,
+    bookedAmount: booked,
+    confirmedAmount: confirmed,
+    extraAmount: cashExtraAmount(booked, confirmed),
+    amount: confirmed,
+  };
+}
+
 function dispatchPaymentNotifications(notifications) {
   if (!notifications) return;
   // COMBINED sets both premium + salonFee; one push covers the paid checkout.
   if (notifications.salonFee) {
-    notifyBookingPayment(notifications.salonFee.bookingId, notifications.salonFee.amount);
+    if (notifications.salonFee.cash) {
+      notifyCashConfirmed(notifications.salonFee);
+    } else {
+      notifyBookingPayment(notifications.salonFee.bookingId, notifications.salonFee.amount);
+    }
   } else if (notifications.premiumBookingId) {
     notifyPremiumPayment(notifications.premiumBookingId);
   }
@@ -243,6 +262,9 @@ async function fulfillCashPayment(
     updatedByUserId: ownerUserId,
     transaction,
   });
+  if (notifications?.salonFee) {
+    notifications.salonFee = cashSalonFeeNotification(payment);
+  }
 
   return { alreadyPaid: false, payment, notifications };
 }
@@ -253,7 +275,7 @@ async function recordExtraCashOnPaidPayment(
   { extraAmount, confirmedAmount } = {},
   transaction,
 ) {
-  if (!payment) return { extra: 0, payment: null };
+  if (!payment) return { extra: 0, payment: null, notifications: null };
   if (payment.status !== 'PAID') {
     throw new AppError('Payment must be paid before recording extra cash', 400);
   }
@@ -263,11 +285,11 @@ async function recordExtraCashOnPaidPayment(
     confirmedAmount,
   });
   const extra = cashExtraAmount(payment.amount, confirmed);
-  if (extra <= 0) return { extra: 0, payment };
+  if (extra <= 0) return { extra: 0, payment, notifications: null };
 
   const existingExtra = cashExtraAmount(payment.amount, payment.cash_confirmed_amount);
   if (existingExtra > 0) {
-    if (existingExtra === extra) return { extra, payment };
+    if (existingExtra === extra) return { extra, payment, notifications: null };
     throw new AppError('Extra cash has already been recorded for this payment', 409);
   }
 
@@ -278,7 +300,13 @@ async function recordExtraCashOnPaidPayment(
   payment.updated_by = ownerUserId;
   await payment.save({ transaction });
   await appendCashExtraAdjustment(payment, extra, transaction);
-  return { extra, payment };
+  return {
+    extra,
+    payment,
+    notifications: {
+      salonFee: cashSalonFeeNotification(payment, { notifyOwner: false }),
+    },
+  };
 }
 
 async function markRazorpayPaymentFailed({

@@ -78,7 +78,10 @@ async function buildNewBookingDetails(booking) {
     .map((row) => row.service?.service_name)
     .filter(Boolean);
   const amount = rows.reduce((sum, row) => sum + serviceEffectivePrice(row.service), 0);
-  const premium = Number(booking.premium_amount) || 0;
+  const premium = rows.reduce((sum, row) => sum + (Number(row.premium_amount) || 0), 0)
+    || Number(booking.premium_amount) || 0;
+  const isPremium = rows.some((row) => row.booking_type === 'PREMIUM')
+    || booking.booking_type === 'PREMIUM';
 
   return {
     customerName: customerName(booking),
@@ -89,6 +92,7 @@ async function buildNewBookingDetails(booking) {
     amount: formatMoney(amount + premium),
     bookingGroupId: groupId,
     salonId: booking.salon_id || booking.salon?.id,
+    isPremium,
   };
 }
 
@@ -164,6 +168,43 @@ function notifyBookingPayment(bookingId, amount) {
   }).catch((err) => console.error('[push] notifyBookingPayment:', err.message));
 }
 
+function notifyCashConfirmed({
+  bookingId,
+  bookedAmount,
+  confirmedAmount,
+  extraAmount = 0,
+  notifyOwner = true,
+} = {}) {
+  loadBookingContext(bookingId)
+    .then((booking) => {
+      if (!booking) return;
+      const customerId = customerUserId(booking);
+      const ownerId = ownerUserId(booking);
+      const confirmed = formatMoney(
+        confirmedAmount != null && confirmedAmount !== ''
+          ? confirmedAmount
+          : bookedAmount,
+      );
+      if (customerId) {
+        sendToUserAsync(
+          customerId,
+          templates.cashConfirmed(booking, salonName(booking), {
+            bookedAmount,
+            confirmedAmount,
+            extraAmount,
+          }),
+        );
+      }
+      if (notifyOwner && ownerId) {
+        sendToUserAsync(
+          ownerId,
+          templates.paymentReceived(booking, customerName(booking), confirmed),
+        );
+      }
+    })
+    .catch((err) => console.error('[push] notifyCashConfirmed:', err.message));
+}
+
 function notifyPremiumPayment(bookingId) {
   loadBookingContext(bookingId).then((booking) => {
     if (!booking) return;
@@ -201,5 +242,6 @@ module.exports = {
   notifyBookingCompleted,
   notifyPremiumPayment,
   notifyBookingPayment,
+  notifyCashConfirmed,
   notifyPayAtShopSelected,
 };

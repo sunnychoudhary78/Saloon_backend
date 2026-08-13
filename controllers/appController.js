@@ -2243,7 +2243,7 @@ exports.completeBooking = async (req, res, next) => {
         cashNotifications = cashResult.notifications;
       }
     } else if (salonFeePayment && salonFeePayment.status === 'PAID') {
-      await recordExtraCashOnPaidPayment(
+      const extraResult = await recordExtraCashOnPaidPayment(
         salonFeePayment,
         req.user.id,
         {
@@ -2252,6 +2252,9 @@ exports.completeBooking = async (req, res, next) => {
         },
         t,
       );
+      if (extraResult.notifications) {
+        cashNotifications = extraResult.notifications;
+      }
     }
 
     await t.commit();

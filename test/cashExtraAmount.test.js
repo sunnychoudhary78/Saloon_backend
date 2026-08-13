@@ -232,4 +232,10 @@ test('recordExtraCashOnPaidPayment sets cash fields and appends extra without ch
   assert.equal(payment.cash_confirmed_amount, 580);
   assert.equal(created.amount, 80);
   assert.equal(created.status, 'COLLECTED');
+  assert.equal(result.notifications.salonFee.cash, true);
+  assert.equal(result.notifications.salonFee.notifyOwner, false);
+  assert.equal(result.notifications.salonFee.bookingId, 'book-4');
+  assert.equal(result.notifications.salonFee.bookedAmount, 500);
+  assert.equal(result.notifications.salonFee.confirmedAmount, 580);
+  assert.equal(result.notifications.salonFee.extraAmount, 80);
 });

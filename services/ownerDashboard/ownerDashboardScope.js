@@ -52,7 +52,10 @@ async function resolveOwnerDashboardScope(userId, options = {}) {
     const [serviceCounts, pendingUpdates] = await Promise.all([
       Service.findAll({
         where: { salon_id: { [Op.in]: salonIds }, status: 'ACTIVE' },
-        attributes: ['salon_id', [fn('COUNT', col('id')), 'active_services']],
+        attributes: [
+          'salon_id',
+          [fn('COUNT', col('Service.id')), 'active_services'],
+        ],
         group: ['salon_id'],
         raw: true,
       }),
@@ -77,20 +80,24 @@ async function resolveOwnerDashboardScope(userId, options = {}) {
     ]);
 
     const countBySalon = new Map(
-      serviceCounts.map((row) => [row.salon_id, parseInt(row.active_services, 10) || 0]),
+      serviceCounts.map((row) => [
+        String(row.salon_id),
+        parseInt(row.active_services, 10) || 0,
+      ]),
     );
     const pendingBySalon = new Map();
     for (const app of pendingUpdates) {
       const plain = app.get({ plain: true });
-      if (!pendingBySalon.has(plain.salon_id)) {
-        pendingBySalon.set(plain.salon_id, plain);
+      const salonId = String(plain.salon_id);
+      if (!pendingBySalon.has(salonId)) {
+        pendingBySalon.set(salonId, plain);
       }
     }
 
     salonsWithServices = salonsWithServices.map((salon) => ({
       ...salon,
-      active_services: countBySalon.get(salon.id) || 0,
-      pending_update: pendingBySalon.get(salon.id) || null,
+      active_services: countBySalon.get(String(salon.id)) || 0,
+      pending_update: pendingBySalon.get(String(salon.id)) || null,
     }));
   }
 

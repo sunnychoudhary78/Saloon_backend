@@ -36,14 +36,20 @@ async function resolveOwnerDashboardScope(userId, options = {}) {
     await assertSalonOwnership(userId, scopedSalonId);
   }
 
-  const salonWhere = { owner_id: owner.id };
-  if (scopedSalonId) salonWhere.id = scopedSalonId;
-
-  const salons = await Salon.findAll({
-    where: salonWhere,
+  const allSalons = await Salon.findAll({
+    where: { owner_id: owner.id },
     attributes: SALON_ATTRIBUTES,
     order: [['salon_name', 'ASC']],
   });
+
+  const availableSalons = allSalons.map((s) => ({
+    salon_id: s.id,
+    salon_name: s.salon_name,
+  }));
+
+  const salons = scopedSalonId
+    ? allSalons.filter((s) => String(s.id) === String(scopedSalonId))
+    : allSalons;
 
   const salonIds = salons.map((s) => s.id);
 
@@ -109,6 +115,7 @@ async function resolveOwnerDashboardScope(userId, options = {}) {
     userId,
     salons: salonsWithServices,
     salonIds,
+    availableSalons,
     scopedSalonId,
     date,
     timezone,

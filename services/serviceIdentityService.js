@@ -32,6 +32,51 @@ function duplicateServiceMessage(serviceName, serviceFor) {
   return `${displayServiceName(serviceName)} is already added for ${serviceForLabel(serviceFor)}`;
 }
 
+function mixUnisexBlockedMessage(serviceName, existingFors) {
+  const name = displayServiceName(serviceName);
+  const hasMen = existingFors.includes('MEN');
+  const hasWomen = existingFors.includes('WOMEN');
+  if (hasMen && hasWomen) {
+    return `${name} is already added for Men and Women. You cannot also add it as a unisex service.`;
+  }
+  if (hasMen) {
+    return `${name} is already added for Men. You can add it for Women, but not as a unisex service.`;
+  }
+  return `${name} is already added for Women. You can add it for Men, but not as a unisex service.`;
+}
+
+function mixGenderedBlockedMessage(serviceName) {
+  return `${displayServiceName(serviceName)} is already added for Everyone. Edit that service, or remove it before adding separate Men and Women versions.`;
+}
+
+/**
+ * Returns a 409 message when this name cannot use [serviceFor] given siblings,
+ * or null when the combination is allowed.
+ */
+function serviceIdentityConflict({ serviceName, serviceFor, existingServiceFors }) {
+  const requested = normalizeServiceFor(serviceFor) || 'UNISEX';
+  const existing = [...new Set(
+    (existingServiceFors || [])
+      .map((value) => normalizeServiceFor(value))
+      .filter(Boolean)
+  )];
+
+  if (existing.includes(requested)) {
+    return duplicateServiceMessage(serviceName, requested);
+  }
+
+  const hasUnisex = existing.includes('UNISEX');
+  const hasGendered = existing.includes('MEN') || existing.includes('WOMEN');
+
+  if (requested === 'UNISEX' && hasGendered) {
+    return mixUnisexBlockedMessage(serviceName, existing);
+  }
+  if ((requested === 'MEN' || requested === 'WOMEN') && hasUnisex) {
+    return mixGenderedBlockedMessage(serviceName);
+  }
+  return null;
+}
+
 /**
  * Resolve service_for from salon type + optional client value.
  * MEN/WOMEN salons always lock to salon type; UNISEX uses requested/existing/default.
@@ -57,17 +102,9 @@ function resolveServiceFor({ salonType, requested, existing = null, isCreate = f
   throw new AppError('service_for is required', 400);
 }
 
-async function assertUniqueServiceIdentity({
-  salonId,
-  serviceName,
-  serviceFor,
-  excludeId = null,
-  transaction = null,
-}) {
-  const normalizedServiceFor = normalizeServiceFor(serviceFor) || 'UNISEX';
+function sameNameWhere({ salonId, serviceName, excludeId = null }) {
   const conditions = {
     salon_id: salonId,
-    service_for: normalizedServiceFor,
     [Op.and]: [
       where(
         fn('lower', fn('regexp_replace', fn('btrim', col('service_name')), '\\s+', ' ', 'g')),
@@ -75,16 +112,30 @@ async function assertUniqueServiceIdentity({
       ),
     ],
   };
-
   if (excludeId) conditions.id = { [Op.ne]: excludeId };
+  return conditions;
+}
 
-  const duplicate = await Service.findOne({
-    attributes: ['id'],
-    where: conditions,
+async function assertUniqueServiceIdentity({
+  salonId,
+  serviceName,
+  serviceFor,
+  excludeId = null,
+  transaction = null,
+}) {
+  const siblings = await Service.findAll({
+    attributes: ['id', 'service_for'],
+    where: sameNameWhere({ salonId, serviceName, excludeId }),
     transaction,
   });
-  if (duplicate) {
-    throw new AppError(duplicateServiceMessage(serviceName, normalizedServiceFor), 409);
+
+  const message = serviceIdentityConflict({
+    serviceName,
+    serviceFor,
+    existingServiceFors: siblings.map((row) => row.service_for),
+  });
+  if (message) {
+    throw new AppError(message, 409);
   }
 }
 
@@ -101,6 +152,7 @@ module.exports = {
   normalizeServiceFor,
   resolveServiceFor,
   duplicateServiceMessage,
+  serviceIdentityConflict,
   assertUniqueServiceIdentity,
   mapServiceIdentityConflict,
 };

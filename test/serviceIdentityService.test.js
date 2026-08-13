@@ -8,14 +8,24 @@ const {
   DUPLICATE_MESSAGE,
   assertUniqueServiceIdentity,
   mapServiceIdentityConflict,
+  serviceIdentityConflict,
 } = require('../services/serviceIdentityService');
 
-test('allows a service identity when no name+gender duplicate exists', async (t) => {
-  const originalFindOne = Service.findOne;
+function mockFindAll(t, rows) {
+  const originalFindAll = Service.findAll;
   t.after(() => {
-    Service.findOne = originalFindOne;
+    Service.findAll = originalFindAll;
   });
-  Service.findOne = async () => null;
+  let capturedWhere;
+  Service.findAll = async ({ where }) => {
+    capturedWhere = where;
+    return typeof rows === 'function' ? rows() : rows;
+  };
+  return () => capturedWhere;
+}
+
+test('allows a service identity when no same-name sibling exists', async (t) => {
+  mockFindAll(t, []);
 
   await assert.doesNotReject(() =>
     assertUniqueServiceIdentity({
@@ -27,15 +37,7 @@ test('allows a service identity when no name+gender duplicate exists', async (t)
 });
 
 test('rejects the same name and gender even when price or description differ', async (t) => {
-  const originalFindOne = Service.findOne;
-  t.after(() => {
-    Service.findOne = originalFindOne;
-  });
-  let capturedWhere;
-  Service.findOne = async ({ where }) => {
-    capturedWhere = where;
-    return { id: 'existing-service' };
-  };
+  const capturedWhere = mockFindAll(t, [{ id: 'existing-service', service_for: 'MEN' }]);
 
   await assert.rejects(
     assertUniqueServiceIdentity({
@@ -48,22 +50,15 @@ test('rejects the same name and gender even when price or description differ', a
       error.message === 'Haircut is already added for Men'
   );
 
-  assert.equal(capturedWhere.salon_id, 'salon-1');
-  assert.equal(capturedWhere.service_for, 'MEN');
-  assert.equal(capturedWhere.price, undefined);
-  assert.equal(capturedWhere.description, undefined);
+  const where = capturedWhere();
+  assert.equal(where.salon_id, 'salon-1');
+  assert.equal(where.service_for, undefined);
+  assert.equal(where.price, undefined);
+  assert.equal(where.description, undefined);
 });
 
 test('excludes the current service while validating an update', async (t) => {
-  const originalFindOne = Service.findOne;
-  t.after(() => {
-    Service.findOne = originalFindOne;
-  });
-  let capturedWhere;
-  Service.findOne = async ({ where }) => {
-    capturedWhere = where;
-    return null;
-  };
+  const capturedWhere = mockFindAll(t, []);
 
   await assertUniqueServiceIdentity({
     salonId: 'salon-1',
@@ -72,28 +67,101 @@ test('excludes the current service while validating an update', async (t) => {
     excludeId: 'service-1',
   });
 
-  assert.deepEqual(capturedWhere.id, { [Op.ne]: 'service-1' });
-  assert.equal(capturedWhere.service_for, 'WOMEN');
+  const where = capturedWhere();
+  assert.deepEqual(where.id, { [Op.ne]: 'service-1' });
+  assert.equal(where.service_for, undefined);
 });
 
-test('allows same name for different service_for values', async (t) => {
-  const originalFindOne = Service.findOne;
-  t.after(() => {
-    Service.findOne = originalFindOne;
-  });
-  let capturedWhere;
-  Service.findOne = async ({ where }) => {
-    capturedWhere = where;
-    return null;
-  };
+test('allows Men and Women versions of the same service name', async (t) => {
+  mockFindAll(t, [{ id: 'men-cut', service_for: 'MEN' }]);
 
-  await assertUniqueServiceIdentity({
-    salonId: 'salon-1',
-    serviceName: 'Haircut',
-    serviceFor: 'WOMEN',
-  });
+  await assert.doesNotReject(() =>
+    assertUniqueServiceIdentity({
+      salonId: 'salon-1',
+      serviceName: 'Haircut',
+      serviceFor: 'WOMEN',
+    })
+  );
+});
 
-  assert.equal(capturedWhere.service_for, 'WOMEN');
+test('allows editing Unisex to Men when no other Haircut exists', async (t) => {
+  mockFindAll(t, []);
+
+  await assert.doesNotReject(() =>
+    assertUniqueServiceIdentity({
+      salonId: 'salon-1',
+      serviceName: 'Haircut',
+      serviceFor: 'MEN',
+      excludeId: 'unisex-cut',
+    })
+  );
+});
+
+test('rejects Unisex when a Men version already exists', async (t) => {
+  mockFindAll(t, [{ id: 'men-cut', service_for: 'MEN' }]);
+
+  await assert.rejects(
+    assertUniqueServiceIdentity({
+      salonId: 'salon-1',
+      serviceName: 'Haircut',
+      serviceFor: 'UNISEX',
+    }),
+    (error) =>
+      error.statusCode === 409 &&
+      error.message ===
+        'Haircut is already added for Men. You can add it for Women, but not as a unisex service.'
+  );
+});
+
+test('rejects Men when a Unisex version already exists', async (t) => {
+  mockFindAll(t, [{ id: 'unisex-cut', service_for: 'UNISEX' }]);
+
+  await assert.rejects(
+    assertUniqueServiceIdentity({
+      salonId: 'salon-1',
+      serviceName: 'Haircut',
+      serviceFor: 'MEN',
+    }),
+    (error) =>
+      error.statusCode === 409 &&
+      error.message ===
+        'Haircut is already added for Everyone. Edit that service, or remove it before adding separate Men and Women versions.'
+  );
+});
+
+test('serviceIdentityConflict allows Men plus Women and blocks unisex mixes', () => {
+  assert.equal(
+    serviceIdentityConflict({
+      serviceName: 'Haircut',
+      serviceFor: 'WOMEN',
+      existingServiceFors: ['MEN'],
+    }),
+    null
+  );
+  assert.equal(
+    serviceIdentityConflict({
+      serviceName: 'Haircut',
+      serviceFor: 'UNISEX',
+      existingServiceFors: ['MEN', 'WOMEN'],
+    }),
+    'Haircut is already added for Men and Women. You cannot also add it as a unisex service.'
+  );
+  assert.equal(
+    serviceIdentityConflict({
+      serviceName: 'Haircut',
+      serviceFor: 'MEN',
+      existingServiceFors: ['UNISEX'],
+    }),
+    'Haircut is already added for Everyone. Edit that service, or remove it before adding separate Men and Women versions.'
+  );
+  assert.equal(
+    serviceIdentityConflict({
+      serviceName: 'Haircut',
+      serviceFor: 'UNISEX',
+      existingServiceFors: [],
+    }),
+    null
+  );
 });
 
 test('maps database uniqueness races to a conflict response', () => {

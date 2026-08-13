@@ -9,11 +9,24 @@ const {
   Customer,
   User,
   Service,
+  sequelize,
 } = require('../models');
 const AppError = require('../middlewares/AppError');
 
 const PREMIUM_CONFIG_KEY = 'premium_booking_config';
 const ACTIVE_BOOKING_STATUSES = ['PENDING', 'ACCEPTED'];
+const ACCEPTED_BOOKING_STATUS = 'ACCEPTED';
+const PREMIUM_ALREADY_ACCEPTED_MESSAGE = 'Premium booking is already accepted for this slot';
+const SLOT_ALREADY_BOOKED_MESSAGE = 'This slot is already booked';
+const PREMIUM_ONLY_OCCUPIED_MESSAGE = 'Premium booking is only for occupied or blocked slots';
+const CUSTOMER_DUPLICATE_SERVICE_MESSAGE = 'You already booked this service for the selected slot';
+const OWN_SLOT_BOOKED_MESSAGE = 'You already have a booking for this time.';
+const UPGRADE_AVAILABLE_MESSAGE = 'You already have a pending request for this time.';
+const SLOT_CONFLICT_CODES = {
+  DUPLICATE_SERVICE: 'DUPLICATE_SERVICE',
+  OWN_SLOT_BOOKED: 'OWN_SLOT_BOOKED',
+  UPGRADE_AVAILABLE: 'UPGRADE_AVAILABLE',
+};
 /** Bookable calendar grid step (opening → closing). */
 const SLOT_DURATION_MINUTES = 30;
 
@@ -134,7 +147,7 @@ async function getOccupiedBookings(salonId, date, { attributes, transaction } = 
     where: {
       salon_id: salonId,
       booking_date: formatDateOnly(date),
-      booking_status: { [Op.in]: ACTIVE_BOOKING_STATUSES },
+      booking_status: ACCEPTED_BOOKING_STATUS,
     },
     attributes: attributes || undefined,
     include: attributes
@@ -167,6 +180,116 @@ function bookingTimeKey(bookingTime) {
   return normalized || String(bookingTime).slice(0, 8);
 }
 
+function slotGroupKey(booking) {
+  return booking.booking_group_id || `single:${booking.id}`;
+}
+
+function isPremiumBookingGroup(rows) {
+  return (rows || []).some((row) => row.booking_type === 'PREMIUM');
+}
+
+function groupBookingsByGroupId(bookings) {
+  const groups = new Map();
+  for (const booking of bookings || []) {
+    const key = slotGroupKey(booking);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(booking);
+  }
+  return groups;
+}
+
+function classifyAcceptedSlotGroups(bookings, { excludeGroupKey } = {}) {
+  const groups = groupBookingsByGroupId(bookings);
+  let hasAcceptedStandard = false;
+  let hasAcceptedPremium = false;
+  for (const [key, rows] of groups) {
+    if (excludeGroupKey && key === excludeGroupKey) continue;
+    const acceptedRows = rows.filter((row) => row.booking_status === ACCEPTED_BOOKING_STATUS);
+    if (acceptedRows.length === 0) continue;
+    if (isPremiumBookingGroup(acceptedRows) || isPremiumBookingGroup(rows)) {
+      hasAcceptedPremium = true;
+    } else {
+      hasAcceptedStandard = true;
+    }
+  }
+  return { hasAcceptedStandard, hasAcceptedPremium };
+}
+
+function buildAcceptedOccupancyBySlot(bookings) {
+  const occupancy = new Map();
+  const groupsBySlot = new Map();
+  for (const booking of bookings || []) {
+    const slotKey = bookingTimeKey(booking.booking_time);
+    if (!groupsBySlot.has(slotKey)) groupsBySlot.set(slotKey, new Map());
+    const groups = groupsBySlot.get(slotKey);
+    const groupKey = slotGroupKey(booking);
+    if (!groups.has(groupKey)) groups.set(groupKey, []);
+    groups.get(groupKey).push(booking);
+  }
+
+  for (const [slotKey, groups] of groupsBySlot) {
+    let hasAcceptedPremium = false;
+    let hasAcceptedStandard = false;
+    let standardRep = null;
+    let premiumRep = null;
+    for (const rows of groups.values()) {
+      if (isPremiumBookingGroup(rows)) {
+        hasAcceptedPremium = true;
+        premiumRep = premiumRep
+          || rows.find((row) => row.booking_type === 'PREMIUM')
+          || rows[0];
+      } else {
+        hasAcceptedStandard = true;
+        standardRep = standardRep || rows[0];
+      }
+    }
+    occupancy.set(slotKey, {
+      representative: standardRep || premiumRep,
+      hasAcceptedPremium,
+      hasAcceptedStandard,
+    });
+  }
+  return occupancy;
+}
+
+function lockOptions(transaction) {
+  return transaction ? { transaction, lock: transaction.LOCK.UPDATE } : {};
+}
+
+async function lockSlotForUpdate(salonId, dateStr, normalizedTime, transaction) {
+  if (!transaction) return;
+  const slotKey = `${salonId}:${dateStr}:${normalizedTime}`;
+  await sequelize.query(
+    'SELECT pg_advisory_xact_lock(hashtext(:slotKey))',
+    { replacements: { slotKey }, transaction },
+  );
+}
+
+async function loadSlotBookingsForUpdate(salonId, dateStr, normalizedTime, transaction) {
+  return Booking.findAll({
+    where: {
+      salon_id: salonId,
+      booking_date: dateStr,
+      booking_time: normalizedTime,
+      booking_status: { [Op.in]: ACTIVE_BOOKING_STATUSES },
+    },
+    ...lockOptions(transaction),
+  });
+}
+
+async function findBlockedOverride(salonId, dateStr, normalizedTime, transaction) {
+  return SalonSlotOverride.findOne({
+    where: {
+      salon_id: salonId,
+      slot_date: dateStr,
+      slot_start: normalizedTime,
+      is_blocked: true,
+      is_active: true,
+    },
+    ...lockOptions(transaction),
+  });
+}
+
 async function buildSlotList(salon, date, { includeBookingDetails = false } = {}) {
   const dateStr = formatDateOnly(date);
   const baseSlots = generateHourlySlots(salon.opening_time, salon.closing_time);
@@ -175,10 +298,7 @@ async function buildSlotList(salon, date, { includeBookingDetails = false } = {}
     getBlockedOverrides(salon.id, dateStr),
   ]);
 
-  const bookingBySlot = new Map();
-  for (const b of bookings) {
-    bookingBySlot.set(bookingTimeKey(b.booking_time), b);
-  }
+  const occupancyBySlot = buildAcceptedOccupancyBySlot(bookings);
 
   const blockedBySlot = new Map();
   for (const o of overrides) {
@@ -193,7 +313,8 @@ async function buildSlotList(salon, date, { includeBookingDetails = false } = {}
     const slotStart = minutesToTimeString(start);
     const slotEnd = minutesToTimeString(start + SLOT_DURATION_MINUTES);
     const inHours = baseSlots.some((s) => s.slot_start === slotStart);
-    const booking = bookingBySlot.get(slotStart);
+    const occupancy = occupancyBySlot.get(slotStart);
+    const booking = occupancy?.representative;
     const override = blockedBySlot.get(slotStart);
     const past = inPast(slotStart);
 
@@ -202,7 +323,7 @@ async function buildSlotList(salon, date, { includeBookingDetails = false } = {}
       status = 'closed';
     } else if (past) {
       status = 'past';
-    } else if (booking) {
+    } else if (occupancy) {
       status = 'booked';
     } else if (override) {
       status = 'blocked';
@@ -214,9 +335,11 @@ async function buildSlotList(salon, date, { includeBookingDetails = false } = {}
       slot_start: slotStart,
       slot_end: slotEnd,
       status,
-      premium_eligible: premiumConfig.enabled
-        && status !== 'available'
-        && status !== 'past',
+      premium_eligible: Boolean(
+        premiumConfig.enabled
+        && (status === 'booked' || status === 'blocked')
+        && !occupancy?.hasAcceptedPremium
+      ),
     };
 
     if (includeBookingDetails && booking) {
@@ -349,7 +472,7 @@ async function getBatchAvailabilitySummariesForDate(salons, dateStr) {
       where: {
         salon_id: { [Op.in]: salonIds },
         booking_date: normalizedDate,
-        booking_status: { [Op.in]: ACTIVE_BOOKING_STATUSES },
+        booking_status: ACCEPTED_BOOKING_STATUS,
       },
       attributes: ['salon_id', 'booking_time'],
       raw: true,
@@ -401,8 +524,8 @@ async function getBatchTodayAvailabilitySummaries(salons) {
   return getBatchAvailabilitySummariesForDate(salons, todayDateString());
 }
 
-async function assertSlotBookable(salonId, date, slotStart, { isPremium = false } = {}) {
-  const salon = await Salon.findByPk(salonId);
+async function assertSlotBookable(salonId, date, slotStart, { isPremium = false, transaction } = {}) {
+  const salon = await Salon.findByPk(salonId, transaction ? { transaction } : undefined);
   if (!salon) throw new AppError('Salon not found', 404);
   if (salon.status !== 'ACTIVE' || !salon.is_active) {
     throw new AppError('Salon is not available for booking', 400);
@@ -421,39 +544,37 @@ async function assertSlotBookable(salonId, date, slotStart, { isPremium = false 
     throw new AppError('Cannot book a slot in the past', 400);
   }
 
-  const slotData = await buildSlotList(salon, dateStr);
-  const slot = slotData.slots.find((s) => s.slot_start === normalized);
-  if (!slot) {
+  const baseSlots = generateHourlySlots(salon.opening_time, salon.closing_time);
+  if (!baseSlots.some((s) => s.slot_start === normalized)) {
     throw new AppError('Invalid slot for this salon', 400);
   }
 
-  if (slot.status === 'past') {
+  if (isSlotInPast(dateStr, normalized)) {
     throw new AppError('Cannot book a slot in the past', 400);
   }
 
-  if (slot.status === 'available') {
-    const existingStandard = await Booking.findOne({
-      where: {
-        salon_id: salonId,
-        booking_date: dateStr,
-        booking_time: normalized,
-        booking_status: { [Op.in]: ACTIVE_BOOKING_STATUSES },
-        booking_type: 'STANDARD',
-      },
-    });
-    if (existingStandard) {
-      throw new AppError('This slot is already booked', 409);
-    }
-    if (isPremium) {
-      throw new AppError('Premium booking is only for occupied or blocked slots', 400);
-    }
+  await lockSlotForUpdate(salonId, dateStr, normalized, transaction);
+
+  const [slotBookings, override] = await Promise.all([
+    loadSlotBookingsForUpdate(salonId, dateStr, normalized, transaction),
+    findBlockedOverride(salonId, dateStr, normalized, transaction),
+  ]);
+
+  const { hasAcceptedStandard, hasAcceptedPremium } = classifyAcceptedSlotGroups(slotBookings);
+  const isBlocked = Boolean(override);
+  const isBooked = hasAcceptedStandard || hasAcceptedPremium;
+
+  if (!isPremium) {
+    if (isBooked) throw new AppError(SLOT_ALREADY_BOOKED_MESSAGE, 409);
+    if (isBlocked) throw new AppError('This slot is blocked by the salon', 409);
     return { salon, slotStart: normalized, bookingType: 'STANDARD' };
   }
 
-  if (!isPremium) {
-    if (slot.status === 'booked') throw new AppError('This slot is already booked', 409);
-    if (slot.status === 'blocked') throw new AppError('This slot is blocked by the salon', 409);
-    throw new AppError('This slot is not available', 400);
+  if (!isBooked && !isBlocked) {
+    throw new AppError(PREMIUM_ONLY_OCCUPIED_MESSAGE, 400);
+  }
+  if (hasAcceptedPremium) {
+    throw new AppError(PREMIUM_ALREADY_ACCEPTED_MESSAGE, 409);
   }
 
   const premiumConfig = await resolvePremiumConfigForSalon(salon);
@@ -467,6 +588,92 @@ async function assertSlotBookable(salonId, date, slotStart, { isPremium = false 
     bookingType: 'PREMIUM',
     premiumAmount: premiumConfig.fee,
   };
+}
+
+async function assertSlotGroupAcceptable(group, { transaction } = {}) {
+  if (!group || group.length === 0) {
+    throw new AppError('Booking not found', 404);
+  }
+
+  const primary = group[0];
+  const dateStr = formatDateOnly(primary.booking_date);
+  const normalized = normalizeSlotStart(primary.booking_time) || String(primary.booking_time).slice(0, 8);
+  const currentKey = slotGroupKey(primary);
+  const currentIsPremium = isPremiumBookingGroup(group);
+
+  await lockSlotForUpdate(primary.salon_id, dateStr, normalized, transaction);
+
+  const [slotBookings, override] = await Promise.all([
+    loadSlotBookingsForUpdate(primary.salon_id, dateStr, normalized, transaction),
+    findBlockedOverride(primary.salon_id, dateStr, normalized, transaction),
+  ]);
+
+  const { hasAcceptedStandard, hasAcceptedPremium } = classifyAcceptedSlotGroups(slotBookings, {
+    excludeGroupKey: currentKey,
+  });
+
+  if (!currentIsPremium) {
+    if (hasAcceptedStandard) {
+      throw new AppError(SLOT_ALREADY_BOOKED_MESSAGE, 409);
+    }
+    return { currentIsPremium };
+  }
+
+  if (hasAcceptedPremium) {
+    throw new AppError(PREMIUM_ALREADY_ACCEPTED_MESSAGE, 409);
+  }
+  if (!hasAcceptedStandard && !override) {
+    throw new AppError(PREMIUM_ONLY_OCCUPIED_MESSAGE, 400);
+  }
+
+  return { currentIsPremium };
+}
+
+async function autoRejectCompetingPendingGroups({
+  salonId,
+  bookingDate,
+  bookingTime,
+  currentGroup,
+  userId,
+  transaction,
+  rejectionReason = 'Another booking was accepted for this slot',
+} = {}) {
+  if (!currentGroup || currentGroup.length === 0) return [];
+
+  const dateStr = formatDateOnly(bookingDate);
+  const normalized = normalizeSlotStart(bookingTime) || String(bookingTime).slice(0, 8);
+  const currentKey = slotGroupKey(currentGroup[0]);
+  const currentIsPremium = isPremiumBookingGroup(currentGroup);
+
+  const pending = await Booking.findAll({
+    where: {
+      salon_id: salonId,
+      booking_date: dateStr,
+      booking_time: normalized,
+      booking_status: 'PENDING',
+    },
+    ...lockOptions(transaction),
+  });
+
+  const groups = groupBookingsByGroupId(pending);
+  const rejectedRepresentatives = [];
+
+  for (const [key, rows] of groups) {
+    if (key === currentKey) continue;
+    if (isPremiumBookingGroup(rows) !== currentIsPremium) continue;
+
+    for (const item of rows) {
+      item.booking_status = 'REJECTED';
+      item.rejection_reason = rejectionReason;
+      item.responded_by = userId;
+      item.responded_at = new Date();
+      item.updated_by = userId;
+      await item.save({ transaction });
+    }
+    rejectedRepresentatives.push(rows[0].id);
+  }
+
+  return rejectedRepresentatives;
 }
 
 async function assertCustomerServiceSlotFree(salonId, date, slotStart, serviceId, customerId, options = {}) {
@@ -486,8 +693,75 @@ async function assertCustomerServiceSlotFree(salonId, date, slotStart, serviceId
   });
 
   if (existing) {
-    throw new AppError('You already booked this service for the selected slot', 409);
+    throw new AppError(CUSTOMER_DUPLICATE_SERVICE_MESSAGE, 409, {
+      code: SLOT_CONFLICT_CODES.DUPLICATE_SERVICE,
+    });
   }
+}
+
+function evaluateCustomerSlotRequest(activeBookings, requestedServiceIds) {
+  const requested = [...new Set((requestedServiceIds || []).filter(Boolean).map(String))];
+  const activeServiceIds = new Set((activeBookings || []).map((row) => String(row.service_id)));
+  const newServiceIds = requested.filter((id) => !activeServiceIds.has(id));
+
+  if (requested.length > 0 && newServiceIds.length === 0) {
+    return { type: SLOT_CONFLICT_CODES.DUPLICATE_SERVICE };
+  }
+
+  const groups = groupBookingsByGroupId(activeBookings);
+  let hasAccepted = false;
+  const pendingGroups = [];
+  for (const [, rows] of groups) {
+    if (rows.some((row) => row.booking_status === 'ACCEPTED')) {
+      hasAccepted = true;
+    } else if (rows.some((row) => row.booking_status === 'PENDING')) {
+      pendingGroups.push(rows);
+    }
+  }
+
+  if (hasAccepted) {
+    return { type: SLOT_CONFLICT_CODES.OWN_SLOT_BOOKED };
+  }
+
+  if (pendingGroups.length > 0 && newServiceIds.length > 0) {
+    pendingGroups.sort((a, b) => {
+      const aTime = new Date(a[0].created_at || 0).getTime();
+      const bTime = new Date(b[0].created_at || 0).getTime();
+      return bTime - aTime;
+    });
+    const rows = pendingGroups[0];
+    return {
+      type: SLOT_CONFLICT_CODES.UPGRADE_AVAILABLE,
+      groupId: rows[0].booking_group_id || rows[0].id,
+      existingRows: rows,
+      newServiceIds,
+    };
+  }
+
+  return { type: 'CLEAR' };
+}
+
+async function findCustomerActiveSlotBookings(salonId, date, slotStart, customerId, { transaction } = {}) {
+  const normalized = normalizeSlotStart(slotStart);
+  if (!normalized) {
+    throw new AppError('booking_time must be on a 30-minute slot (e.g. 10:00 or 10:30)', 400);
+  }
+
+  return Booking.findAll({
+    where: {
+      salon_id: salonId,
+      booking_date: formatDateOnly(date),
+      booking_time: normalized,
+      customer_id: customerId,
+      booking_status: { [Op.in]: ACTIVE_BOOKING_STATUSES },
+    },
+    include: [{ model: Service, as: 'service', attributes: ['id', 'service_name'] }],
+    order: [['created_at', 'DESC']],
+    transaction,
+    lock: transaction
+      ? { level: transaction.LOCK.UPDATE, of: Booking }
+      : undefined,
+  });
 }
 
 const assertAdditionalServiceBookable = assertCustomerServiceSlotFree;
@@ -547,6 +821,13 @@ async function setSlotBlocked(salonId, slotDate, slotStart, isBlocked, note, use
 
 module.exports = {
   PREMIUM_CONFIG_KEY,
+  PREMIUM_ALREADY_ACCEPTED_MESSAGE,
+  SLOT_ALREADY_BOOKED_MESSAGE,
+  PREMIUM_ONLY_OCCUPIED_MESSAGE,
+  CUSTOMER_DUPLICATE_SERVICE_MESSAGE,
+  OWN_SLOT_BOOKED_MESSAGE,
+  UPGRADE_AVAILABLE_MESSAGE,
+  SLOT_CONFLICT_CODES,
   SLOT_DURATION_MINUTES,
   generateSlots,
   generateHourlySlots,
@@ -561,8 +842,16 @@ module.exports = {
   getTodayAvailabilitySummary,
   getBatchTodayAvailabilitySummaries,
   getBatchAvailabilitySummariesForDate,
+  slotGroupKey,
+  isPremiumBookingGroup,
+  classifyAcceptedSlotGroups,
   assertSlotBookable,
+  assertSlotGroupAcceptable,
+  autoRejectCompetingPendingGroups,
+  lockSlotForUpdate,
   assertCustomerServiceSlotFree,
+  evaluateCustomerSlotRequest,
+  findCustomerActiveSlotBookings,
   assertAdditionalServiceBookable,
   setSlotBlocked,
 };

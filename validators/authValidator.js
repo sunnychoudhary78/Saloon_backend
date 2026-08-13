@@ -14,6 +14,7 @@ const bookingSchema = Joi.object({
   notes: Joi.string().allow(null, '').optional(),
   is_premium: Joi.boolean().optional(),
   staff_id: Joi.string().uuid().allow(null).optional(),
+  merge_into_group_id: Joi.string().uuid().optional(),
 }).or('service_id', 'service_ids');
 
 const staffSchema = Joi.object({

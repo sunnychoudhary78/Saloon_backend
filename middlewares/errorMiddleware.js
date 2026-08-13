@@ -42,6 +42,10 @@ module.exports = (err, req, res, next) => {
         requestId: req ? req.id : undefined,
     };
 
+    if (err.isOperational && err.extra && typeof err.extra === 'object' && Object.keys(err.extra).length > 0) {
+        if (err.extra.code) response.code = err.extra.code;
+        response.data = err.extra;
+    }
 
     if (isDev && !err.isOperational) {
         // attach stack trace in development for debugging

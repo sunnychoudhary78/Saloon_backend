@@ -45,10 +45,20 @@ const {
   getBatchTodayAvailabilitySummaries,
   assertSlotBookable,
   assertCustomerServiceSlotFree,
+  evaluateCustomerSlotRequest,
+  findCustomerActiveSlotBookings,
+  assertSlotGroupAcceptable,
+  autoRejectCompetingPendingGroups,
+  lockSlotForUpdate,
   setSlotBlocked,
   loadPremiumConfig,
   resolvePremiumConfigForSalon,
   normalizeSlotStart,
+  formatDateOnly,
+  CUSTOMER_DUPLICATE_SERVICE_MESSAGE,
+  OWN_SLOT_BOOKED_MESSAGE,
+  UPGRADE_AVAILABLE_MESSAGE,
+  SLOT_CONFLICT_CODES,
 } = require('../services/slotService');
 const {
   notifyNewBooking,
@@ -1094,6 +1104,7 @@ exports.createBooking = async (req, res, next) => {
       notes,
       is_premium: isPremium,
       staff_id: staffIdBody,
+      merge_into_group_id: mergeIntoGroupId,
     } = req.body;
 
     const serviceIds = Array.isArray(serviceIdsBody) && serviceIdsBody.length > 0
@@ -1105,6 +1116,13 @@ exports.createBooking = async (req, res, next) => {
     if (!salon_id || serviceIds.length === 0 || !booking_date || !booking_time) {
       throw new AppError('salon_id, service_id or service_ids, booking_date, booking_time are required', 400);
     }
+
+    const normalizedTime = normalizeSlotStart(booking_time);
+    if (!normalizedTime) {
+      throw new AppError('booking_time must be on a 30-minute slot (e.g. 10:00 or 10:30)', 400);
+    }
+    const dateStr = formatDateOnly(booking_date);
+    await lockSlotForUpdate(salon_id, dateStr, normalizedTime, t);
 
     let preferredStaffId = null;
     if (staffIdBody) {
@@ -1121,57 +1139,182 @@ exports.createBooking = async (req, res, next) => {
       preferredStaffId = staff.id;
     }
 
-    const slotInfo = await assertSlotBookable(salon_id, booking_date, booking_time, {
-      isPremium: Boolean(isPremium),
-    });
-
-    const normalizedTime = normalizeSlotStart(booking_time) || slotInfo.slotStart;
-    const isPremiumBooking = slotInfo.bookingType === 'PREMIUM';
-    // All services requested together share one group id so the salon can
-    // accept/reject/cancel them as a single logical booking.
-    const bookingGroupId = crypto.randomUUID();
     const createdBookings = [];
+    let notifyBookingId = null;
 
-    for (let i = 0; i < serviceIds.length; i += 1) {
-      const currentServiceId = serviceIds[i];
-
-      const service = await Service.findOne({
-        where: { id: currentServiceId, salon_id, status: 'ACTIVE' },
+    if (mergeIntoGroupId) {
+      const groupRows = await Booking.findAll({
+        where: {
+          customer_id: customer.id,
+          salon_id,
+          [Op.or]: [
+            { booking_group_id: mergeIntoGroupId },
+            { id: mergeIntoGroupId },
+          ],
+        },
         transaction: t,
+        lock: t.LOCK.UPDATE,
       });
-      if (!service) throw new AppError(`Service not found: ${currentServiceId}`, 404);
+      if (groupRows.length === 0) throw new AppError('Booking not found', 404);
+      if (groupRows.some((row) => row.booking_status !== 'PENDING')) {
+        throw new AppError('This request can no longer be updated', 409, {
+          code: SLOT_CONFLICT_CODES.OWN_SLOT_BOOKED,
+        });
+      }
+      const primary = groupRows[0];
+      if (
+        formatDateOnly(primary.booking_date) !== dateStr
+        || (normalizeSlotStart(primary.booking_time) || String(primary.booking_time).slice(0, 8)) !== normalizedTime
+      ) {
+        throw new AppError('That request is not for the selected slot', 400);
+      }
 
-      await assertCustomerServiceSlotFree(
+      const resolvedGroupId = primary.booking_group_id || primary.id;
+      for (const row of groupRows) {
+        if (!row.booking_group_id) {
+          row.booking_group_id = resolvedGroupId;
+          row.updated_by = req.user.id;
+          await row.save({ transaction: t });
+        }
+      }
+
+      const existingServiceIds = new Set(groupRows.map((row) => String(row.service_id)));
+      const toAdd = serviceIds.filter((id) => !existingServiceIds.has(String(id)));
+      if (toAdd.length === 0) {
+        throw new AppError(CUSTOMER_DUPLICATE_SERVICE_MESSAGE, 409, {
+          code: SLOT_CONFLICT_CODES.DUPLICATE_SERVICE,
+        });
+      }
+
+      const staffId = preferredStaffId || primary.staff_id;
+      for (const currentServiceId of toAdd) {
+        const service = await Service.findOne({
+          where: { id: currentServiceId, salon_id, status: 'ACTIVE' },
+          transaction: t,
+        });
+        if (!service) throw new AppError(`Service not found: ${currentServiceId}`, 404);
+
+        await assertCustomerServiceSlotFree(
+          salon_id,
+          booking_date,
+          normalizedTime,
+          currentServiceId,
+          customer.id,
+          { transaction: t }
+        );
+
+        const booking = await Booking.create({
+          booking_number: await generateBookingNumber(t),
+          booking_group_id: resolvedGroupId,
+          customer_id: customer.id,
+          salon_id,
+          service_id: currentServiceId,
+          staff_id: staffId,
+          booking_date,
+          booking_time: normalizedTime,
+          notes,
+          booking_status: 'PENDING',
+          booking_type: 'STANDARD',
+          premium_amount: null,
+          premium_payment_status: 'NONE',
+          created_by: req.user.id,
+          updated_by: req.user.id,
+        }, { transaction: t });
+        createdBookings.push(booking);
+      }
+    } else {
+      const activeOwn = await findCustomerActiveSlotBookings(
         salon_id,
         booking_date,
         normalizedTime,
-        currentServiceId,
         customer.id,
-        { transaction: t }
+        { transaction: t },
       );
+      const decision = evaluateCustomerSlotRequest(activeOwn, serviceIds);
 
-      const booking = await Booking.create({
-        booking_number: await generateBookingNumber(t),
-        booking_group_id: bookingGroupId,
-        customer_id: customer.id,
-        salon_id,
-        service_id: currentServiceId,
-        staff_id: preferredStaffId,
-        booking_date,
-        booking_time: normalizedTime,
-        notes,
-        booking_status: 'PENDING',
-        // The premium (urgent) fee is charged once per slot on the primary
-        // booking. Additional services in the same urgent request are STANDARD
-        // so they aren't blocked behind a premium payment they don't owe.
-        booking_type: isPremiumBooking && i === 0 ? 'PREMIUM' : 'STANDARD',
-        premium_amount: isPremiumBooking && i === 0 ? slotInfo.premiumAmount : null,
-        premium_payment_status: isPremiumBooking && i === 0 ? 'PENDING' : 'NONE',
-        created_by: req.user.id,
-        updated_by: req.user.id,
-      }, { transaction: t });
+      if (decision.type === SLOT_CONFLICT_CODES.DUPLICATE_SERVICE) {
+        throw new AppError(CUSTOMER_DUPLICATE_SERVICE_MESSAGE, 409, {
+          code: SLOT_CONFLICT_CODES.DUPLICATE_SERVICE,
+        });
+      }
+      if (decision.type === SLOT_CONFLICT_CODES.OWN_SLOT_BOOKED) {
+        throw new AppError(OWN_SLOT_BOOKED_MESSAGE, 409, {
+          code: SLOT_CONFLICT_CODES.OWN_SLOT_BOOKED,
+        });
+      }
+      if (decision.type === SLOT_CONFLICT_CODES.UPGRADE_AVAILABLE) {
+        const existingNames = (decision.existingRows || [])
+          .map((row) => row.service?.service_name)
+          .filter(Boolean);
+        const newServices = await Service.findAll({
+          where: { id: decision.newServiceIds, salon_id, status: 'ACTIVE' },
+          attributes: ['id', 'service_name'],
+          transaction: t,
+        });
+        if (newServices.length === 0) {
+          throw new AppError(`Service not found: ${decision.newServiceIds[0]}`, 404);
+        }
+        throw new AppError(UPGRADE_AVAILABLE_MESSAGE, 409, {
+          code: SLOT_CONFLICT_CODES.UPGRADE_AVAILABLE,
+          group_id: decision.groupId,
+          existing_service_names: existingNames,
+          new_service_ids: newServices.map((s) => s.id),
+          new_service_names: newServices.map((s) => s.service_name),
+        });
+      }
 
-      createdBookings.push(booking);
+      const slotInfo = await assertSlotBookable(salon_id, booking_date, booking_time, {
+        isPremium: Boolean(isPremium),
+        transaction: t,
+      });
+
+      const isPremiumBooking = slotInfo.bookingType === 'PREMIUM';
+      // All services requested together share one group id so the salon can
+      // accept/reject/cancel them as a single logical booking.
+      const bookingGroupId = crypto.randomUUID();
+
+      for (let i = 0; i < serviceIds.length; i += 1) {
+        const currentServiceId = serviceIds[i];
+
+        const service = await Service.findOne({
+          where: { id: currentServiceId, salon_id, status: 'ACTIVE' },
+          transaction: t,
+        });
+        if (!service) throw new AppError(`Service not found: ${currentServiceId}`, 404);
+
+        await assertCustomerServiceSlotFree(
+          salon_id,
+          booking_date,
+          normalizedTime,
+          currentServiceId,
+          customer.id,
+          { transaction: t }
+        );
+
+        const booking = await Booking.create({
+          booking_number: await generateBookingNumber(t),
+          booking_group_id: bookingGroupId,
+          customer_id: customer.id,
+          salon_id,
+          service_id: currentServiceId,
+          staff_id: preferredStaffId,
+          booking_date,
+          booking_time: normalizedTime,
+          notes,
+          booking_status: 'PENDING',
+          // The premium (urgent) fee is charged once per slot on the primary
+          // booking. Additional services in the same urgent request are STANDARD
+          // so they aren't blocked behind a premium payment they don't owe.
+          booking_type: isPremiumBooking && i === 0 ? 'PREMIUM' : 'STANDARD',
+          premium_amount: isPremiumBooking && i === 0 ? slotInfo.premiumAmount : null,
+          premium_payment_status: isPremiumBooking && i === 0 ? 'PENDING' : 'NONE',
+          created_by: req.user.id,
+          updated_by: req.user.id,
+        }, { transaction: t });
+
+        createdBookings.push(booking);
+      }
+      notifyBookingId = createdBookings[0]?.id || null;
     }
 
     await t.commit();
@@ -1203,15 +1346,20 @@ exports.createBooking = async (req, res, next) => {
         : fullBookings.map(shapeCustomerBooking),
     });
 
-    if (fullBookings[0]) {
-      notifyNewBooking(fullBookings[0].id);
+    if (notifyBookingId) {
+      notifyNewBooking(notifyBookingId);
     }
   } catch (err) {
     await t.rollback();
     if (err.name === 'SequelizeUniqueConstraintError') {
       const constraint = String(err.parent?.constraint || err.index || '');
       if (constraint.includes('customer_service_slot')) {
-        return next(new AppError('You already booked this service for the selected slot', 409));
+        return next(new AppError(CUSTOMER_DUPLICATE_SERVICE_MESSAGE, 409, {
+          code: SLOT_CONFLICT_CODES.DUPLICATE_SERVICE,
+        }));
+      }
+      if (constraint.includes('accepted_premium_slot')) {
+        return next(new AppError('Premium booking is already accepted for this slot', 409));
       }
       return next(new AppError('This slot is already booked', 409));
     }
@@ -1843,6 +1991,16 @@ exports.acceptBooking = async (req, res, next) => {
   const t = await sequelize.transaction();
   let committed = false;
   try {
+    const bookingPreview = await Booking.findByPk(req.params.id, { transaction: t });
+    if (!bookingPreview) throw new AppError('Booking not found', 404);
+
+    await lockSlotForUpdate(
+      bookingPreview.salon_id,
+      formatDateOnly(bookingPreview.booking_date),
+      normalizeSlotStart(bookingPreview.booking_time) || bookingPreview.booking_time,
+      t,
+    );
+
     const booking = await Booking.findByPk(req.params.id, {
       transaction: t,
       lock: t.LOCK.UPDATE,
@@ -1865,6 +2023,7 @@ exports.acceptBooking = async (req, res, next) => {
 
     // Accept every still-pending service in the same request.
     const group = await loadBookingGroupForUpdate(booking, t);
+    await assertSlotGroupAcceptable(group, { transaction: t });
     for (const item of group) {
       if (!canTransition(item.booking_status, 'ACCEPTED')) continue;
       item.booking_status = 'ACCEPTED';
@@ -1873,9 +2032,22 @@ exports.acceptBooking = async (req, res, next) => {
       item.updated_by = req.user.id;
       await item.save({ transaction: t });
     }
+
+    const rejectedIds = await autoRejectCompetingPendingGroups({
+      salonId: booking.salon_id,
+      bookingDate: booking.booking_date,
+      bookingTime: booking.booking_time,
+      currentGroup: group,
+      userId: req.user.id,
+      transaction: t,
+    });
+
     await t.commit();
     committed = true;
     notifyBookingConfirmed(booking.id);
+    for (const rejectedId of rejectedIds) {
+      notifyBookingRejected(rejectedId);
+    }
 
     const fullBooking = await Booking.findByPk(booking.id, {
       include: ownerBookingDetailInclude(),
@@ -1883,6 +2055,13 @@ exports.acceptBooking = async (req, res, next) => {
     res.json({ data: shapeBookingWithPayments(fullBooking) });
   } catch (err) {
     if (!committed) await t.rollback();
+    if (err.name === 'SequelizeUniqueConstraintError') {
+      const constraint = String(err.parent?.constraint || err.index || '');
+      if (constraint.includes('accepted_premium_slot')) {
+        return next(new AppError('Premium booking is already accepted for this slot', 409));
+      }
+      return next(new AppError('This slot is already booked', 409));
+    }
     next(err);
   }
 };

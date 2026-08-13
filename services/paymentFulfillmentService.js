@@ -8,8 +8,8 @@ const {
 } = require('../models');
 const AppError = require('../middlewares/AppError');
 const { verifyPaymentSignature, amountToPaise } = require('./razorpayService');
-const { markExpired } = require('./paymentService');
-const { createFromPayment } = require('./settlementLedgerService');
+const { createFromPayment, appendCashExtraAdjustment } = require('./settlementLedgerService');
+const { markExpired, resolveCashConfirmedAmount, cashExtraAmount } = require('./paymentService');
 const {
   notifyPremiumPayment,
   notifyBookingPayment,
@@ -213,7 +213,12 @@ async function fulfillRazorpayPayment({
   return { found: true, alreadyPaid: false, payment, notifications };
 }
 
-async function fulfillCashPayment(paymentId, ownerUserId, { confirmedAmount }, transaction) {
+async function fulfillCashPayment(
+  paymentId,
+  ownerUserId,
+  { extraAmount, confirmedAmount } = {},
+  transaction,
+) {
   const payment = await loadPaymentById(paymentId, transaction);
   if (!payment) throw new AppError('Payment not found', 404);
   if (payment.method !== 'PAY_AT_SHOP') {
@@ -226,16 +231,13 @@ async function fulfillCashPayment(paymentId, ownerUserId, { confirmedAmount }, t
     throw new AppError(`Payment is ${payment.status.toLowerCase()}`, 400);
   }
 
-  payment.status = 'PAID';
   payment.cash_confirmed = true;
-  payment.cash_confirmed_amount = confirmedAmount != null
-    ? Number(confirmedAmount)
-    : Number(payment.amount);
+  payment.cash_confirmed_amount = resolveCashConfirmedAmount(payment.amount, {
+    extraAmount,
+    confirmedAmount,
+  });
   payment.cash_confirmed_at = new Date();
   payment.cash_confirmed_by = ownerUserId;
-  payment.paid_at = new Date();
-  payment.updated_by = ownerUserId;
-  await payment.save({ transaction });
 
   const notifications = await fulfillPaidPayment(payment, {
     updatedByUserId: ownerUserId,
@@ -243,6 +245,40 @@ async function fulfillCashPayment(paymentId, ownerUserId, { confirmedAmount }, t
   });
 
   return { alreadyPaid: false, payment, notifications };
+}
+
+async function recordExtraCashOnPaidPayment(
+  payment,
+  ownerUserId,
+  { extraAmount, confirmedAmount } = {},
+  transaction,
+) {
+  if (!payment) return { extra: 0, payment: null };
+  if (payment.status !== 'PAID') {
+    throw new AppError('Payment must be paid before recording extra cash', 400);
+  }
+
+  const confirmed = resolveCashConfirmedAmount(payment.amount, {
+    extraAmount,
+    confirmedAmount,
+  });
+  const extra = cashExtraAmount(payment.amount, confirmed);
+  if (extra <= 0) return { extra: 0, payment };
+
+  const existingExtra = cashExtraAmount(payment.amount, payment.cash_confirmed_amount);
+  if (existingExtra > 0) {
+    if (existingExtra === extra) return { extra, payment };
+    throw new AppError('Extra cash has already been recorded for this payment', 409);
+  }
+
+  payment.cash_confirmed = true;
+  payment.cash_confirmed_amount = confirmed;
+  payment.cash_confirmed_at = new Date();
+  payment.cash_confirmed_by = ownerUserId;
+  payment.updated_by = ownerUserId;
+  await payment.save({ transaction });
+  await appendCashExtraAdjustment(payment, extra, transaction);
+  return { extra, payment };
 }
 
 async function markRazorpayPaymentFailed({
@@ -274,4 +310,5 @@ module.exports = {
   fulfillCashPayment,
   loadPaymentForFulfillment,
   markRazorpayPaymentFailed,
+  recordExtraCashOnPaidPayment,
 };

@@ -1,5 +1,8 @@
 const { SettlementLedger } = require('../models');
 const AppError = require('../middlewares/AppError');
+const { cashExtraAmount, roundMoney } = require('./paymentService');
+
+const EXTRA_CASH_NOTES = 'Extra cash collected at shop';
 
 async function createFromPayment(payment, transaction = null) {
   const plain = typeof payment.get === 'function' ? payment.get({ plain: true }) : payment;
@@ -77,6 +80,19 @@ async function createFromPayment(payment, transaction = null) {
     }
   }
 
+  const extra = cashExtraAmount(plain.amount, plain.cash_confirmed_amount);
+  if (extra > 0) {
+    entries.push({
+      ...base,
+      payment_line_item_id: null,
+      booking_id: plain.booking_id,
+      entry_type: 'ADJUSTMENT',
+      amount: extra,
+      status: 'COLLECTED',
+      notes: EXTRA_CASH_NOTES,
+    });
+  }
+
   if (entries.length === 0) return [];
 
   try {
@@ -86,6 +102,53 @@ async function createFromPayment(payment, transaction = null) {
     console.error('[settlement] createFromPayment failed:', detail);
     throw new AppError(
       `Failed to record earnings for payment: ${detail}`,
+      500,
+    );
+  }
+}
+
+async function appendCashExtraAdjustment(payment, extra, transaction = null) {
+  const amount = roundMoney(extra);
+  if (!(amount > 0)) return null;
+
+  const plain = typeof payment.get === 'function' ? payment.get({ plain: true }) : payment;
+  const bookingGroupId = plain.booking_group_id || plain.booking_id;
+  if (!bookingGroupId) {
+    throw new AppError('Payment is missing booking group for settlement ledger', 500);
+  }
+
+  const existing = await SettlementLedger.findOne({
+    where: {
+      payment_id: plain.id,
+      entry_type: 'ADJUSTMENT',
+      notes: EXTRA_CASH_NOTES,
+    },
+    transaction,
+  });
+  if (existing) {
+    if (roundMoney(existing.amount) === amount) return existing;
+    throw new AppError('Extra cash has already been recorded for this payment', 409);
+  }
+
+  try {
+    return await SettlementLedger.create({
+      payment_id: plain.id,
+      payment_line_item_id: null,
+      booking_id: plain.booking_id,
+      booking_group_id: bookingGroupId,
+      salon_id: plain.salon_id,
+      entry_type: 'ADJUSTMENT',
+      amount,
+      currency: plain.currency || 'INR',
+      settings_version: plain.settings_version != null ? Number(plain.settings_version) : 1,
+      status: 'COLLECTED',
+      notes: EXTRA_CASH_NOTES,
+    }, { transaction });
+  } catch (err) {
+    const detail = err?.message || 'unknown error';
+    console.error('[settlement] appendCashExtraAdjustment failed:', detail);
+    throw new AppError(
+      `Failed to record extra cash for payment: ${detail}`,
       500,
     );
   }
@@ -111,6 +174,8 @@ async function queryLedger({ salonId, status, page = 1, limit = 20 }) {
 }
 
 module.exports = {
+  EXTRA_CASH_NOTES,
+  appendCashExtraAdjustment,
   createFromPayment,
   queryLedger,
 };

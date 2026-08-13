@@ -18,9 +18,14 @@ const payAtShopSchema = Joi.object({
   booking_group_id: Joi.string().uuid().optional(),
 }).or('booking_id', 'booking_group_id');
 
+const confirmCashSchema = Joi.object({
+  extra_amount: Joi.number().min(0).allow(null),
+  confirmed_amount: Joi.number().min(0).allow(null),
+});
+
 function validate(schema) {
   return (req, res, next) => {
-    const { error, value } = schema.validate(req.body, { abortEarly: false, stripUnknown: true });
+    const { error, value } = schema.validate(req.body || {}, { abortEarly: false, stripUnknown: true });
     if (error) {
       return res.status(400).json({
         message: 'Validation error',
@@ -33,6 +38,7 @@ function validate(schema) {
 }
 
 module.exports = {
+  validateConfirmCash: validate(confirmCashSchema),
   validateCreateRazorpayOrder: validate(createRazorpayOrderSchema),
   validatePayAtShop: validate(payAtShopSchema),
   validateVerifyRazorpayPayment: validate(verifyRazorpayPaymentSchema),

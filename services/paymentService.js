@@ -110,13 +110,59 @@ function splitPayments(payments = []) {
   return { premium_payment: premiumPayment, salon_fee_payment: salonFeePayment };
 }
 
+function roundMoney(value) {
+  return Math.round(Number(value) * 100) / 100;
+}
+
+function cashExtraAmount(originalAmount, confirmedAmount) {
+  if (confirmedAmount == null || confirmedAmount === '') return 0;
+  const extra = roundMoney(Number(confirmedAmount) - Number(originalAmount));
+  return extra > 0 ? extra : 0;
+}
+
+function resolveCashConfirmedAmount(originalAmount, { extraAmount, confirmedAmount } = {}) {
+  const original = roundMoney(originalAmount);
+  if (!Number.isFinite(original) || original < 0) {
+    throw new AppError('Payment amount is invalid', 400);
+  }
+
+  const hasExtra = extraAmount != null && extraAmount !== '';
+  if (hasExtra) {
+    const extra = roundMoney(extraAmount);
+    if (!Number.isFinite(extra) || extra < 0) {
+      throw new AppError('Extra cash amount cannot be negative', 400);
+    }
+    return roundMoney(original + extra);
+  }
+
+  const hasConfirmed = confirmedAmount != null && confirmedAmount !== '';
+  if (hasConfirmed) {
+    const confirmed = roundMoney(confirmedAmount);
+    if (!Number.isFinite(confirmed)) {
+      throw new AppError('Confirmed cash amount is invalid', 400);
+    }
+    if (confirmed < original) {
+      throw new AppError('Confirmed cash cannot be less than the booked salon fee', 400);
+    }
+    return confirmed;
+  }
+
+  return original;
+}
+
 function shapePayment(payment, { includeRazorpayKey = false } = {}) {
   if (!payment) return null;
   const plain = typeof payment.get === 'function' ? payment.get({ plain: true }) : payment;
+  const amount = Number(plain.amount);
+  const cashConfirmedAmount = plain.cash_confirmed_amount == null
+    ? null
+    : Number(plain.cash_confirmed_amount);
   const shaped = {
     ...plain,
-    amount: Number(plain.amount),
+    amount,
     amount_paise: razorpayService.amountToPaise(plain.amount),
+    cash_confirmed_amount: cashConfirmedAmount,
+    cash_extra_amount: cashExtraAmount(amount, cashConfirmedAmount),
     line_items: (plain.line_items || []).map((line) => ({
       ...line,
       gross_amount: Number(line.gross_amount),
@@ -133,6 +179,7 @@ function shapePayment(payment, { includeRazorpayKey = false } = {}) {
 }
 
 module.exports = {
+  cashExtraAmount,
   createOrReuseRazorpayOrder,
   createPremiumPaymentWindow,
   deadlineFromNow,
@@ -140,6 +187,8 @@ module.exports = {
   isExpired,
   markExpired,
   premiumPayableAmount,
+  resolveCashConfirmedAmount,
+  roundMoney,
   servicePayableAmount,
   shapePayment,
   splitPayments,

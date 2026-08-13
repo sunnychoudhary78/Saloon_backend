@@ -317,7 +317,7 @@ async function fetchEarnings(scope) {
       ), 0) AS settled,
       COALESCE(SUM(sl.amount) FILTER (
         WHERE sl.status = 'COLLECTED'
-          AND sl.entry_type IN ('SERVICE_SALON_NET', 'PREMIUM_SALON')
+          AND sl.entry_type IN ('SERVICE_SALON_NET', 'PREMIUM_SALON', 'ADJUSTMENT')
       ), 0) AS collected_at_salon,
       COALESCE(SUM(sl.amount) FILTER (
         WHERE sl.status = 'PENDING'

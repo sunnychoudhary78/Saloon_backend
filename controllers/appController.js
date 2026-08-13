@@ -135,6 +135,7 @@ const {
   dispatchPaymentNotifications,
   fulfillRazorpayPayment,
   fulfillCashPayment,
+  recordExtraCashOnPaidPayment,
 } = require('../services/paymentFulfillmentService');
 const { encryptAccountNumber, maskAccountNumber } = require('../utils/payoutEncryption');
 const { visitKeyFromRow } = require('../services/ownerDashboard/visitKey');
@@ -2222,7 +2223,7 @@ exports.completeBooking = async (req, res, next) => {
     const salonFeePayment = await Payment.findOne({
       where: {
         booking_group_id: groupId,
-        checkout_kind: 'SALON_FEE',
+        checkout_kind: { [Op.in]: ['SALON_FEE', 'COMBINED'] },
         status: { [Op.in]: ['PENDING', 'PAID'] },
       },
       transaction: t,
@@ -2267,12 +2268,25 @@ exports.completeBooking = async (req, res, next) => {
       const cashResult = await fulfillCashPayment(
         salonFeePayment.id,
         req.user.id,
-        { confirmedAmount: null },
+        {
+          extraAmount: req.body?.extra_amount,
+          confirmedAmount: req.body?.confirmed_amount,
+        },
         t,
       );
       if (!cashResult.alreadyPaid) {
         cashNotifications = cashResult.notifications;
       }
+    } else if (salonFeePayment && salonFeePayment.status === 'PAID') {
+      await recordExtraCashOnPaidPayment(
+        salonFeePayment,
+        req.user.id,
+        {
+          extraAmount: req.body?.extra_amount,
+          confirmedAmount: req.body?.confirmed_amount,
+        },
+        t,
+      );
     }
 
     await t.commit();
@@ -2468,8 +2482,15 @@ exports.confirmBookingGroupCash = async (req, res, next) => {
     });
     if (!payment) throw new AppError('No pending pay-at-shop checkout for this visit', 404);
 
-    const { confirmed_amount: confirmedAmount } = req.body;
-    const result = await fulfillCashPayment(payment.id, req.user.id, { confirmedAmount }, t);
+    const result = await fulfillCashPayment(
+      payment.id,
+      req.user.id,
+      {
+        extraAmount: req.body?.extra_amount,
+        confirmedAmount: req.body?.confirmed_amount,
+      },
+      t,
+    );
 
     await t.commit();
     committed = true;
@@ -2523,7 +2544,7 @@ exports.getOwnerEarningsSummary = async (req, res, next) => {
         ), 0) AS settled,
         COALESCE(SUM(sl.amount) FILTER (
           WHERE sl.status = 'COLLECTED'
-            AND sl.entry_type IN ('SERVICE_SALON_NET', 'PREMIUM_SALON')
+            AND sl.entry_type IN ('SERVICE_SALON_NET', 'PREMIUM_SALON', 'ADJUSTMENT')
         ), 0) AS collected_at_salon,
         COALESCE(SUM(sl.amount) FILTER (
           WHERE sl.status = 'PENDING'
@@ -2574,7 +2595,7 @@ exports.getOwnerEarningsTransactions = async (req, res, next) => {
     const { count, rows } = await SettlementLedger.findAndCountAll({
       where: {
         salon_id: { [Op.in]: salonIds },
-        entry_type: { [Op.in]: ['SERVICE_SALON_NET', 'PREMIUM_SALON'] },
+        entry_type: { [Op.in]: ['SERVICE_SALON_NET', 'PREMIUM_SALON', 'ADJUSTMENT'] },
       },
       order: [['created_at', 'DESC']],
       limit,

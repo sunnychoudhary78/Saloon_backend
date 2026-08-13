@@ -17,6 +17,7 @@ const {
   validateReview,
 } = require('../validators/authValidator');
 const {
+  validateConfirmCash,
   validateCreateRazorpayOrder,
   validatePayAtShop,
   validateVerifyRazorpayPayment,
@@ -135,7 +136,7 @@ router.put('/owner/salons/:salonId/staff/:staffId', authMiddleware, roleMiddlewa
 router.get('/owner/bookings', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.getOwnerBookings));
 router.patch('/owner/bookings/:id/accept', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.acceptBooking));
 router.patch('/owner/bookings/:id/reject', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.rejectBooking));
-router.patch('/owner/bookings/:id/complete', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.completeBooking));
+router.patch('/owner/bookings/:id/complete', authMiddleware, roleMiddleware(['SALON_OWNER']), validateConfirmCash, asyncHandler(ctrl.completeBooking));
 router.get('/owner/dashboard/summary', authMiddleware, roleMiddleware(['SALON_OWNER']), validateOwnerDashboardQuery, asyncHandler(dashboardCtrl.getSummary));
 router.get('/owner/dashboard/attention', authMiddleware, roleMiddleware(['SALON_OWNER']), validateOwnerDashboardAttentionQuery, asyncHandler(dashboardCtrl.getAttention));
 router.get('/owner/dashboard/schedule', authMiddleware, roleMiddleware(['SALON_OWNER']), validateOwnerDashboardScheduleQuery, asyncHandler(dashboardCtrl.getSchedule));
@@ -145,7 +146,7 @@ router.get('/owner/earnings/summary', authMiddleware, roleMiddleware(['SALON_OWN
 router.get('/owner/earnings/transactions', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.getOwnerEarningsTransactions));
 router.get('/owner/payout-account', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.getOwnerPayoutAccount));
 router.put('/owner/payout-account', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.upsertOwnerPayoutAccount));
-router.patch('/owner/booking-groups/:groupId/confirm-cash', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.confirmBookingGroupCash));
+router.patch('/owner/booking-groups/:groupId/confirm-cash', authMiddleware, roleMiddleware(['SALON_OWNER']), validateConfirmCash, asyncHandler(ctrl.confirmBookingGroupCash));
 router.get('/owner/reviews', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.getOwnerReviews));
 
 module.exports = router;

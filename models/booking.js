@@ -39,6 +39,7 @@ module.exports = (sequelize, DataTypes) => {
       responded_by: { type: DataTypes.UUID, allowNull: true },
       responded_at: { type: DataTypes.DATE, allowNull: true },
       reminder_sent_at: { type: DataTypes.DATE, allowNull: true },
+      premium_payment_due_at: { type: DataTypes.DATE, allowNull: true },
       ...baseFields(DataTypes),
     },
     {

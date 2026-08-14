@@ -17,6 +17,7 @@ module.exports = {
       enabled: true,
       fee: 199,
       currency: 'INR',
+      payment_window_minutes: 15,
     };
 
     await queryInterface.sequelize.query(

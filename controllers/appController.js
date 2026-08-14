@@ -62,7 +62,14 @@ const {
   notifyBookingRejected,
   notifyBookingCompleted,
   notifyPayAtShopSelected,
+  notifyPremiumPaymentWindowExpired,
 } = require('../services/bookingNotificationHelper');
+const {
+  applyPremiumPaymentDueAt,
+  cancelExpiredPremiumGroup,
+  isPremiumPaymentWindowExpired,
+  premiumDueAtFromGroup,
+} = require('../services/premiumPaymentExpiryService');
 const { notifySalonApplicationSubmitted } = require('../services/salonApplicationNotificationHelper');
 const { notifyNewReview } = require('../services/reviewNotificationHelper');
 const {
@@ -1442,6 +1449,22 @@ exports.createRazorpayOrder = async (req, res, next) => {
     const premiumPaid = !isPremium || bookings.some(
       (b) => b.booking_type === 'PREMIUM' && b.premium_payment_status === 'PAID',
     );
+    const premiumBooking = bookings.find((b) => b.booking_type === 'PREMIUM');
+
+    if (
+      isPremium
+      && !premiumPaid
+      && isPremiumPaymentWindowExpired(premiumBooking)
+    ) {
+      const result = await cancelExpiredPremiumGroup(premiumBooking, {
+        userId: req.user.id,
+        transaction: t,
+      });
+      await t.commit();
+      committed = true;
+      if (result.cancelled) notifyPremiumPaymentWindowExpired(premiumBooking.id);
+      throw new AppError('Payment window has expired', 400);
+    }
 
     if (checkoutKind === 'PREMIUM_ONLY' || checkoutKind === 'COMBINED') {
       if (!isPremium) throw new AppError('This is not a premium booking', 400);
@@ -1452,8 +1475,9 @@ exports.createRazorpayOrder = async (req, res, next) => {
     }
 
     const premiumFee = await resolvePremiumFeeForGroup(bookings);
+    const snapshotDueAt = premiumDueAtFromGroup(bookings);
     const expiresAt = (checkoutKind === 'PREMIUM_ONLY' || checkoutKind === 'COMBINED')
-      ? deadlineFromNow()
+      ? (snapshotDueAt || deadlineFromNow((await loadPremiumConfig()).payment_window_minutes))
       : null;
 
     let payment = await findActiveCheckout(groupId, checkoutKind, t);
@@ -1474,17 +1498,23 @@ exports.createRazorpayOrder = async (req, res, next) => {
         expiresAt,
         transaction: t,
       });
+    } else if (expiresAt) {
+      payment.expires_at = expiresAt;
+      payment.updated_by = req.user.id;
+      await payment.save({ transaction: t });
     }
 
     await markExpired(payment, t);
     if (payment.status === 'EXPIRED') {
       if (checkoutKind === 'PREMIUM_ONLY' || checkoutKind === 'COMBINED') {
-        for (const b of bookings) {
-          if (b.booking_type === 'PREMIUM') {
-            b.premium_payment_status = 'FAILED';
-            b.updated_by = req.user.id;
-            await b.save({ transaction: t });
-          }
+        const result = await cancelExpiredPremiumGroup(premiumBooking || bookings[0], {
+          userId: req.user.id,
+          transaction: t,
+        });
+        await t.commit();
+        committed = true;
+        if (result.cancelled) {
+          notifyPremiumPaymentWindowExpired((premiumBooking || bookings[0]).id);
         }
       }
       throw new AppError('Payment window has expired', 400);
@@ -2001,6 +2031,11 @@ exports.acceptBooking = async (req, res, next) => {
     // Accept every still-pending service in the same request.
     const group = await loadBookingGroupForUpdate(booking, t);
     await assertSlotGroupAcceptable(group, { transaction: t });
+    const hasPremium = group.some((item) => item.booking_type === 'PREMIUM');
+    const dueAt = hasPremium
+      ? deadlineFromNow((await loadPremiumConfig()).payment_window_minutes)
+      : null;
+    if (dueAt) applyPremiumPaymentDueAt(group, dueAt);
     for (const item of group) {
       if (!canTransition(item.booking_status, 'ACCEPTED')) continue;
       item.booking_status = 'ACCEPTED';

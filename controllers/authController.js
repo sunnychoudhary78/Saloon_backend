@@ -20,19 +20,39 @@ exports.login = async (req, res) => {
       return res.status(400).json({ message: 'Email is required' });
     }
 
+    console.log('[auth/login] identifier=', identifier);
+
     const user = await User.findOne({
       where: { email: identifier },
       include: [{ model: Role, as: 'Roles', through: { attributes: [] } }],
     });
 
-    if (!user) return res.status(401).json({ message: 'Invalid credentials' });
+    console.log('[auth/login] found=', Boolean(user));
+    if (user) {
+      console.log('[auth/login] user=', {
+        id: user.id,
+        email: user.email,
+        status: user.status,
+        is_active: user.is_active,
+        hasPassword: Boolean(user.password),
+      });
+    }
+
+    if (!user) {
+      console.log('[auth/login] branch=USER_NOT_FOUND');
+      return res.status(401).json({ message: 'Invalid credentials' });
+    }
     if (!user.is_active || user.status === 'BLOCKED') {
       return res.status(403).json({ message: 'Account is blocked. Please contact support.' });
     }
     if (!user.password) return res.status(400).json({ message: 'Use OAuth to login' });
 
     const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(401).json({ message: 'Invalid credentials' });
+    console.log('[auth/login] passwordMatch=', isMatch);
+    if (!isMatch) {
+      console.log('[auth/login] branch=PASSWORD_MISMATCH');
+      return res.status(401).json({ message: 'Invalid credentials' });
+    }
 
     const fullUser = await loadUserWithRoles(user.id);
     if (!hasAdminAccess(fullUser)) {

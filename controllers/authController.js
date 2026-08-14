@@ -40,7 +40,7 @@ exports.login = async (req, res) => {
 
     if (!user) {
       console.log('[auth/login] branch=USER_NOT_FOUND');
-      return res.status(401).json({ message: 'Invalid credentials' });
+      return res.status(401).json({ message: 'Invalid credentials', debug: 'USER_NOT_FOUND' });
     }
     if (!user.is_active || user.status === 'BLOCKED') {
       return res.status(403).json({ message: 'Account is blocked. Please contact support.' });
@@ -51,7 +51,7 @@ exports.login = async (req, res) => {
     console.log('[auth/login] passwordMatch=', isMatch);
     if (!isMatch) {
       console.log('[auth/login] branch=PASSWORD_MISMATCH');
-      return res.status(401).json({ message: 'Invalid credentials' });
+      return res.status(401).json({ message: 'Invalid credentials', debug: 'PASSWORD_MISMATCH' });
     }
 
     const fullUser = await loadUserWithRoles(user.id);

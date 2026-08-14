@@ -5,7 +5,7 @@ run-name: Deploy Backend
 on:
   push:
     branches:
-      - main
+      - uat
 
 jobs:
   deploy:
@@ -21,7 +21,7 @@ jobs:
           script: |
             set -e
             cd /var/www/uat_salon_backend_apis/UAT_SALON_SERVICES
-            git pull origin main
+            git pull origin uat
             npm install
             npx sequelize-cli db:migrate --env uat
             pm2 restart UAT_SALON_API --update-env

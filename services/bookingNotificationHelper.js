@@ -221,6 +221,28 @@ function notifyPremiumPayment(bookingId) {
   }).catch((err) => console.error('[push] notifyPremiumPayment:', err.message));
 }
 
+function notifyPremiumPaymentWindowExpired(bookingId) {
+  loadBookingContext(bookingId)
+    .then((booking) => {
+      if (!booking) return;
+      const customerId = customerUserId(booking);
+      const ownerId = ownerUserId(booking);
+      if (customerId) {
+        sendToUserAsync(
+          customerId,
+          templates.premiumPaymentWindowExpiredCustomer(booking, salonName(booking)),
+        );
+      }
+      if (ownerId) {
+        sendToUserAsync(
+          ownerId,
+          templates.premiumPaymentWindowExpiredOwner(booking, customerName(booking)),
+        );
+      }
+    })
+    .catch((err) => console.error('[push] notifyPremiumPaymentWindowExpired:', err.message));
+}
+
 function notifyPayAtShopSelected(bookingId, amount) {
   loadBookingContext(bookingId).then((booking) => {
     if (!booking) return;
@@ -244,4 +266,5 @@ module.exports = {
   notifyBookingPayment,
   notifyCashConfirmed,
   notifyPayAtShopSelected,
+  notifyPremiumPaymentWindowExpired,
 };

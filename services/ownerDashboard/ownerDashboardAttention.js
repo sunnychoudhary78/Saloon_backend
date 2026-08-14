@@ -132,6 +132,7 @@ async function fetchPremiumUnpaidPreviews(scope, limit) {
       b.booking_time,
       b.premium_amount,
       b.premium_payment_status,
+      b.premium_payment_due_at,
       u.name AS customer_name,
       sal.salon_name
     FROM "${SCHEMA}"."bookings" b
@@ -281,6 +282,7 @@ async function buildOwnerDashboardAttention(scope, options = {}) {
         booking_time: row.booking_time,
         premium_amount: Number(row.premium_amount),
         premium_payment_status: row.premium_payment_status,
+        premium_payment_due_at: row.premium_payment_due_at,
       })),
     },
     {

@@ -1,6 +1,7 @@
 const { PlatformSetting } = require('../models');
 const AppError = require('../middlewares/AppError');
 const { logAudit } = require('../services/auditService');
+const { PREMIUM_CONFIG_KEY, invalidatePremiumConfigCache } = require('../services/slotService');
 
 exports.getAll = async (req, res, next) => {
   try {
@@ -30,6 +31,10 @@ exports.update = async (req, res, next) => {
       if (description !== undefined) row.description = description;
       row.updated_by = req.user.id;
       await row.save();
+    }
+
+    if (setting_key === PREMIUM_CONFIG_KEY) {
+      invalidatePremiumConfigCache();
     }
 
     await logAudit({ userId: req.user.id, action: 'platformSetting.update', entityType: 'PlatformSetting', entityId: row.id, req });

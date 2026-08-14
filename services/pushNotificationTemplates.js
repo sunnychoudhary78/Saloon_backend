@@ -75,13 +75,17 @@ function applicationLabel(applicationType) {
 }
 
 function bookingConfirmed(booking, salonName) {
+  const isPremium = booking.booking_type === 'PREMIUM';
   return buildPayload({
     type: NOTIFICATION_TYPES.BOOKING_CONFIRMED,
-    title: 'Booking Confirmed',
-    body: `Your appointment at ${salonName} has been confirmed.`,
+    title: isPremium ? 'Urgent booking accepted' : 'Booking Confirmed',
+    body: isPremium
+      ? `Your urgent booking at ${salonName} is accepted. Pay the premium fee before the timer runs out.`
+      : `Your appointment at ${salonName} has been confirmed.`,
     bookingId: booking.id,
     screen: SCREENS.BOOKING_DETAILS,
     userRole: 'customer',
+    extraData: { isPremium: isPremium ? 'true' : 'false' },
   });
 }
 
@@ -137,6 +141,30 @@ function bookingCancelledOwner(booking, customerName) {
     bookingId: booking.id,
     screen: SCREENS.OWNER_BOOKING_DETAILS,
     userRole: 'salon_owner',
+  });
+}
+
+function premiumPaymentWindowExpiredCustomer(booking, salonName) {
+  return buildPayload({
+    type: NOTIFICATION_TYPES.BOOKING_CANCELLED,
+    title: 'Urgent booking cancelled',
+    body: `Your urgent booking at ${salonName} was cancelled because the premium fee was not paid in time.`,
+    bookingId: booking.id,
+    screen: SCREENS.BOOKING_DETAILS,
+    userRole: 'customer',
+    extraData: { reason: 'premium_payment_window_expired' },
+  });
+}
+
+function premiumPaymentWindowExpiredOwner(booking, customerName) {
+  return buildPayload({
+    type: NOTIFICATION_TYPES.BOOKING_CANCELLED,
+    title: 'Urgent booking cancelled',
+    body: `${customerName}'s urgent booking was cancelled — premium payment window expired.`,
+    bookingId: booking.id,
+    screen: SCREENS.OWNER_BOOKING_DETAILS,
+    userRole: 'salon_owner',
+    extraData: { reason: 'premium_payment_window_expired' },
   });
 }
 
@@ -334,6 +362,8 @@ module.exports = {
   appointmentReminder,
   bookingCancelledCustomer,
   bookingCancelledOwner,
+  premiumPaymentWindowExpiredCustomer,
+  premiumPaymentWindowExpiredOwner,
   paymentSuccessful,
   cashConfirmed,
   promotionalOffer,

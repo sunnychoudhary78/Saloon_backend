@@ -14,6 +14,9 @@ const {
 const AppError = require('../middlewares/AppError');
 
 const PREMIUM_CONFIG_KEY = 'premium_booking_config';
+const DEFAULT_PAYMENT_WINDOW_MINUTES = 15;
+const MIN_PAYMENT_WINDOW_MINUTES = 1;
+const MAX_PAYMENT_WINDOW_MINUTES = 120;
 const ACTIVE_BOOKING_STATUSES = ['PENDING', 'ACCEPTED'];
 const ACCEPTED_BOOKING_STATUS = 'ACCEPTED';
 const PREMIUM_ALREADY_ACCEPTED_MESSAGE = 'Premium booking is already accepted for this slot';
@@ -94,6 +97,39 @@ function isSlotInPast(slotDate, slotStart) {
   return slotMinutes !== null && slotMinutes < currentMinutes;
 }
 
+function normalizePaymentWindowMinutes(value) {
+  const parsed = parseInt(value, 10);
+  if (Number.isFinite(parsed) && parsed >= MIN_PAYMENT_WINDOW_MINUTES) {
+    return Math.min(MAX_PAYMENT_WINDOW_MINUTES, parsed);
+  }
+  const fromEnv = parseInt(process.env.PREMIUM_PAYMENT_WINDOW_MINUTES, 10);
+  if (Number.isFinite(fromEnv) && fromEnv >= MIN_PAYMENT_WINDOW_MINUTES) {
+    return Math.min(MAX_PAYMENT_WINDOW_MINUTES, fromEnv);
+  }
+  return DEFAULT_PAYMENT_WINDOW_MINUTES;
+}
+
+function defaultPremiumConfig() {
+  return {
+    enabled: true,
+    fee: 199,
+    currency: 'INR',
+    payment_window_minutes: normalizePaymentWindowMinutes(),
+  };
+}
+
+function shapePremiumConfig(raw) {
+  const config = !raw
+    ? {}
+    : (typeof raw === 'string' ? JSON.parse(raw) : raw);
+  return {
+    enabled: config.enabled !== false,
+    fee: Number(config.fee) || 199,
+    currency: config.currency || 'INR',
+    payment_window_minutes: normalizePaymentWindowMinutes(config.payment_window_minutes),
+  };
+}
+
 async function loadPremiumConfig() {
   const now = Date.now();
   if (
@@ -107,17 +143,8 @@ async function loadPremiumConfig() {
     where: { setting_key: PREMIUM_CONFIG_KEY, is_active: true },
   });
   const value = !row?.setting_value
-    ? { enabled: true, fee: 199, currency: 'INR' }
-    : (() => {
-      const config = typeof row.setting_value === 'string'
-        ? JSON.parse(row.setting_value)
-        : row.setting_value;
-      return {
-        enabled: config.enabled !== false,
-        fee: Number(config.fee) || 199,
-        currency: config.currency || 'INR',
-      };
-    })();
+    ? defaultPremiumConfig()
+    : shapePremiumConfig(row.setting_value);
 
   loadPremiumConfig._cache = {
     value,
@@ -138,6 +165,7 @@ async function resolvePremiumConfigForSalon(salon) {
     enabled: platform.enabled,
     fee: hasCustomFee ? Number(salonFee) : platform.fee,
     currency: platform.currency,
+    payment_window_minutes: platform.payment_window_minutes,
     is_custom_fee: hasCustomFee,
   };
 }
@@ -821,6 +849,11 @@ async function setSlotBlocked(salonId, slotDate, slotStart, isBlocked, note, use
 
 module.exports = {
   PREMIUM_CONFIG_KEY,
+  DEFAULT_PAYMENT_WINDOW_MINUTES,
+  MIN_PAYMENT_WINDOW_MINUTES,
+  MAX_PAYMENT_WINDOW_MINUTES,
+  normalizePaymentWindowMinutes,
+  shapePremiumConfig,
   PREMIUM_ALREADY_ACCEPTED_MESSAGE,
   SLOT_ALREADY_BOOKED_MESSAGE,
   PREMIUM_ONLY_OCCUPIED_MESSAGE,

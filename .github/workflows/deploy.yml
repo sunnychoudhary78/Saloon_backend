@@ -9,8 +9,9 @@ on:
 
 jobs:
   deploy:
-    name: Deploy to VPS
+    name: Deploy to PROD VPS
     runs-on: ubuntu-latest
+
     steps:
       - name: Deploy
         uses: appleboy/ssh-action@v1.0.3
@@ -20,8 +21,13 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             set -e
-            cd /var/www/uat_salon_backend_apis/UAT_SALON_SERVICES
+
+            cd /var/www/salon_backend_apis/SALON_SERVICES
+
             git pull origin main
+
             npm install
-            npx sequelize-cli db:migrate --env uat
-            pm2 restart UAT_SALON_API --update-env
+
+            APP_ENV=production NODE_ENV=production npx sequelize-cli db:migrate
+
+            pm2 restart SALON_API --update-env

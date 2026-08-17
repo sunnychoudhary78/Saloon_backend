@@ -17,6 +17,7 @@ const completeProfileSchema = Joi.object({
   name: Joi.string().min(2).max(100).required(),
   email: Joi.string().email().allow(null, '').optional(),
   gender: Joi.string().valid('male', 'female').required(),
+  account_type: Joi.string().valid('customer', 'salon_owner').default('customer'),
 });
 
 function validate(schema) {

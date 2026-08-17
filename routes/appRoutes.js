@@ -102,7 +102,7 @@ router.post('/favorites', authMiddleware, roleMiddleware(['CUSTOMER']), validate
 router.delete('/favorites/:salonId', authMiddleware, roleMiddleware(['CUSTOMER']), asyncHandler(favoriteCtrl.removeFavorite));
 
 // Salon owner registration & applications
-router.post('/salon-owner/register', authMiddleware, asyncHandler(ctrl.registerSalonOwner));
+router.post('/salon-owner/register', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.registerSalonOwner));
 router.post(
   '/uploads/salon-images',
   authMiddleware,

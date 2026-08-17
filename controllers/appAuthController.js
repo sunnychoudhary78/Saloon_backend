@@ -23,9 +23,9 @@ const {
 } = require('../utils/otpHelpers');
 const { requestOtpSms, OTP_PURPOSE } = require('../services/otpUsageService');
 
-async function assignCustomerRole(userId, transaction) {
-  const role = await Role.findOne({ where: { name: 'CUSTOMER' }, transaction });
-  if (!role) throw new AppError('CUSTOMER role not found', 500);
+async function assignRole(userId, roleName, transaction) {
+  const role = await Role.findOne({ where: { name: roleName }, transaction });
+  if (!role) throw new AppError(`${roleName} role not found`, 500);
   await UserRole.findOrCreate({
     where: { user_id: userId, role_id: role.id },
     defaults: { assigned_at: new Date() },
@@ -125,7 +125,7 @@ exports.completeProfile = async (req, res, next) => {
     }
 
     const phone = decoded.phone;
-    const { name, email, gender } = req.body;
+    const { name, email, gender, account_type: accountType = 'customer' } = req.body;
     const normalizedEmail = email && String(email).trim() ? String(email).trim().toLowerCase() : null;
 
     const existingPhone = await User.findOne({ where: { phone }, transaction: t });
@@ -152,11 +152,15 @@ exports.completeProfile = async (req, res, next) => {
       { transaction: t }
     );
 
-    await assignCustomerRole(user.id, t);
+    await assignRole(user.id, 'CUSTOMER', t);
     await Customer.create(
       { user_id: user.id, gender, status: 'ACTIVE' },
       { transaction: t }
     );
+
+    if (accountType === 'salon_owner') {
+      await assignRole(user.id, 'SALON_OWNER', t);
+    }
 
     await t.commit();
 

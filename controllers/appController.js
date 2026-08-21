@@ -492,23 +492,25 @@ async function assignRole(userId, roleName, assignedBy = null, transaction = nul
 
 async function loadSalonOwnerContext(userId) {
   const owner = await SalonOwner.findOne({ where: { user_id: userId } });
+  if (!owner || owner.status !== 'ACTIVE') {
+    return { salon_owner: null, salon_application: null };
+  }
+
   let salon_application = null;
-  if (owner) {
-    const application = await SalonApplication.findOne({
-      where: { owner_id: owner.id },
-      order: [['created_at', 'DESC']],
-    });
-    if (application) {
-      salon_application = {
-        id: application.id,
-        salon_name: application.salon_name,
-        application_status: application.application_status,
-        application_type: application.application_type || 'CREATE',
-        salon_id: application.salon_id,
-        rejection_reason: application.rejection_reason,
-        created_at: application.created_at,
-      };
-    }
+  const application = await SalonApplication.findOne({
+    where: { owner_id: owner.id },
+    order: [['created_at', 'DESC']],
+  });
+  if (application) {
+    salon_application = {
+      id: application.id,
+      salon_name: application.salon_name,
+      application_status: application.application_status,
+      application_type: application.application_type || 'CREATE',
+      salon_id: application.salon_id,
+      rejection_reason: application.rejection_reason,
+      created_at: application.created_at,
+    };
   }
   return { salon_owner: owner, salon_application };
 }

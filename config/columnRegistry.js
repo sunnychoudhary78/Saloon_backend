@@ -143,6 +143,16 @@ const customerRegistry = [
   { key: "created_at", label: "Joined", path: "created_at", type: "date" },
 ];
 
+const userRegistry = [
+  { key: "name", label: "Name", path: "name", type: "string" },
+  { key: "email", label: "Email", path: "email", type: "string" },
+  { key: "phone", label: "Phone", path: "phone", type: "string" },
+  { key: "account_type", label: "Account Type", path: "account_type", type: "string" },
+  { key: "business_name", label: "Business Name", path: "business_name", type: "string" },
+  { key: "user_status", label: "Status", path: "status", type: "string" },
+  { key: "created_at", label: "Joined", path: "created_at", type: "date" },
+];
+
 const bookingRegistry = [
   {
     key: "booking_number",
@@ -262,6 +272,7 @@ module.exports = {
   salonRegistry,
   serviceRegistry,
   customerRegistry,
+  userRegistry,
   bookingRegistry,
   reviewRegistry,
   couponRegistry,
@@ -273,6 +284,7 @@ module.exports = {
   salonRegistryByKey: toRegistryMap(salonRegistry),
   serviceRegistryByKey: toRegistryMap(serviceRegistry),
   customerRegistryByKey: toRegistryMap(customerRegistry),
+  userRegistryByKey: toRegistryMap(userRegistry),
   bookingRegistryByKey: toRegistryMap(bookingRegistry),
   reviewRegistryByKey: toRegistryMap(reviewRegistry),
   couponRegistryByKey: toRegistryMap(couponRegistry),

@@ -139,6 +139,7 @@ const customerRegistry = [
   { key: "email", label: "Email", path: "user.email", type: "string" },
   { key: "phone", label: "Phone", path: "user.phone", type: "string" },
   { key: "gender", label: "Gender", path: "gender", type: "string" },
+  { key: "account_type", label: "Account Type", path: "account_type", type: "string" },
   { key: "status", label: "Status", path: "status", type: "string" },
   { key: "created_at", label: "Joined", path: "created_at", type: "date" },
 ];

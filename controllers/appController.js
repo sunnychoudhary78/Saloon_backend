@@ -103,6 +103,7 @@ const {
   shapeBrowseSalonRows,
   discountedSalonExistsLiteral,
   minRatingSalonExistsLiteral,
+  buildBrowseOrder,
   filterAndSortSalonsByAvailability,
 } = require('../services/salonBrowseService');
 const {
@@ -842,13 +843,7 @@ exports.browseSalons = async (req, res, next) => {
       ];
     }
 
-    const order = featuredOnly
-      ? [['featured_sort_order', 'ASC'], ['salon_name', 'ASC']]
-      : discountedOnly
-        ? [['salon_name', 'ASC']]
-        : userCoords
-          ? [[distanceLiteral, 'ASC NULLS LAST']]
-          : [['salon_name', 'ASC']];
+    const order = buildBrowseOrder({ featuredOnly, distanceLiteral });
 
     const baseAttributes = [
       'id',
@@ -863,6 +858,7 @@ exports.browseSalons = async (req, res, next) => {
       'opening_time',
       'closing_time',
       'is_featured',
+      'featured_sort_order',
     ];
 
     const browseAttributes = userCoords

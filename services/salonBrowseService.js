@@ -156,8 +156,35 @@ function minRatingSalonExistsLiteral(sequelize, minRating) {
 }
 
 /**
+ * Browse ordering for the customer feed. Featured salons lead, and the trailing
+ * id keeps pagination deterministic when every other key ties — without it the
+ * database may repeat or skip a salon between pages.
+ */
+function buildBrowseOrder({ featuredOnly = false, distanceLiteral = null } = {}) {
+  const order = [];
+  // A featured-only query has nothing to rank by featured flag.
+  if (!featuredOnly) order.push(['is_featured', 'DESC']);
+  order.push(['featured_sort_order', 'ASC']);
+  order.push(distanceLiteral
+    ? [distanceLiteral, 'ASC NULLS LAST']
+    : ['salon_name', 'ASC']);
+  order.push(['id', 'ASC']);
+  return order;
+}
+
+function featuredRank(salon) {
+  return salon.is_featured ? 0 : 1;
+}
+
+function featuredSortOrder(salon) {
+  const value = Number(salon.featured_sort_order);
+  return Number.isFinite(value) ? value : 0;
+}
+
+/**
  * Filters out fully booked salons and sorts by most open slots today.
  * Used when has_available_slots is enabled — loads all matching salons in memory.
+ * Mirrors [buildBrowseOrder] so promoted salons lead this feed too.
  */
 function filterAndSortSalonsByAvailability(salons, slotsMap, { userCoords } = {}) {
   const filtered = salons.filter((salon) => {
@@ -166,6 +193,12 @@ function filterAndSortSalonsByAvailability(salons, slotsMap, { userCoords } = {}
   });
 
   filtered.sort((a, b) => {
+    const featuredCompare = featuredRank(a) - featuredRank(b);
+    if (featuredCompare !== 0) return featuredCompare;
+
+    const sortOrderCompare = featuredSortOrder(a) - featuredSortOrder(b);
+    if (sortOrderCompare !== 0) return sortOrderCompare;
+
     const slotsA = slotsMap.get(a.id) || { available: 0 };
     const slotsB = slotsMap.get(b.id) || { available: 0 };
     if (slotsB.available !== slotsA.available) {
@@ -176,7 +209,9 @@ function filterAndSortSalonsByAvailability(salons, slotsMap, { userCoords } = {}
       const distB = b.distance_km != null ? Number(b.distance_km) : Infinity;
       if (distA !== distB) return distA - distB;
     }
-    return String(a.salon_name).localeCompare(String(b.salon_name));
+    const nameCompare = String(a.salon_name).localeCompare(String(b.salon_name));
+    if (nameCompare !== 0) return nameCompare;
+    return String(a.id).localeCompare(String(b.id));
   });
 
   return filtered;
@@ -240,5 +275,6 @@ module.exports = {
   emptyRatingSummary,
   discountedSalonExistsLiteral,
   minRatingSalonExistsLiteral,
+  buildBrowseOrder,
   filterAndSortSalonsByAvailability,
 };

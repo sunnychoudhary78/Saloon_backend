@@ -2,6 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const morgan = require("morgan");
 const path = require("path");
+const fs = require("fs");
 const requestId = require("./middlewares/requestId");
 const errorMiddleware = require("./middlewares/errorMiddleware");
 const AppError = require("./middlewares/AppError");
@@ -51,6 +52,23 @@ app.use(
   }),
 );
 
+// Fallback for missing salon/staff seed images so the client never hits a broken 404 image
+app.get("/api/uploads/salons/:file", (req, res, next) => {
+  const fallback = path.join(__dirname, "uploads", "salons", "seed-1.jpg");
+  if (fs.existsSync(fallback)) {
+    return res.sendFile(fallback);
+  }
+  next();
+});
+
+app.get("/api/uploads/staff/:file", (req, res, next) => {
+  const fallback = path.join(__dirname, "uploads", "staff", "seed-1.jpg");
+  if (fs.existsSync(fallback)) {
+    return res.sendFile(fallback);
+  }
+  next();
+});
+
 // Auth & access control
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
@@ -67,6 +85,7 @@ app.use("/api/customers", require("./routes/customerRoutes"));
 app.use("/api/bookings", require("./routes/bookingRoutes"));
 app.use("/api/reviews", require("./routes/reviewRoutes"));
 app.use("/api/coupons", require("./routes/couponRoutes"));
+app.use("/api/rewards", require("./routes/rewardRoutes"));
 app.use(
   "/api/promotional-banners",
   require("./routes/promotionalBannerRoutes"),
@@ -81,6 +100,7 @@ app.use(
   require("./routes/salonPayoutAccountRoutes"),
 );
 app.use("/api/audit-logs", require("./routes/auditLogRoutes"));
+app.use("/api/gallery", require("./routes/galleryRoutes"));
 
 // Infrastructure
 app.use("/api/table-configs", require("./routes/tableConfigRoutes"));

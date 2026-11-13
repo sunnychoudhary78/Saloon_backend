@@ -56,6 +56,7 @@ module.exports = (sequelize, DataTypes) => {
     Booking.belongsTo(models.User, { foreignKey: 'responded_by', as: 'responder' });
     Booking.hasOne(models.Review, { foreignKey: 'booking_id', as: 'review' });
     Booking.hasMany(models.Payment, { foreignKey: 'booking_id', as: 'payments' });
+    Booking.hasMany(models.CustomerReward, { foreignKey: 'booking_id', as: 'customer_rewards' });
   };
 
   return Booking;

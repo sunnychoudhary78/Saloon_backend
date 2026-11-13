@@ -40,6 +40,8 @@ module.exports = (sequelize, DataTypes) => {
     User.hasMany(models.DeviceToken, { foreignKey: 'user_id', as: 'device_tokens' });
     User.hasMany(models.UserNotification, { foreignKey: 'user_id', as: 'notifications' });
     User.hasMany(models.CustomerFavorite, { foreignKey: 'user_id', as: 'favorites' });
+    User.hasMany(models.AiStylistSession, { foreignKey: 'user_id', as: 'ai_stylist_sessions' });
+    User.hasMany(models.AiFaceAnalysis, { foreignKey: 'user_id', as: 'ai_face_analyses' });
   };
 
   return User;

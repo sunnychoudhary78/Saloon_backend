@@ -1742,7 +1742,14 @@ exports.getBanners = async (req, res, next) => {
       where: { status: 'ACTIVE', is_active: true },
       order: [['sort_order', 'ASC']],
     });
-    res.json({ data: rows });
+    const mapped = rows.map((r) => {
+      const p = r.get({ plain: true });
+      return {
+        ...p,
+        image_url: p.image,
+      };
+    });
+    res.json({ data: mapped });
   } catch (err) {
     next(err);
   }
@@ -1808,18 +1815,8 @@ exports.reverseGeocodePlace = async (req, res, next) => {
 };
 
 exports.validateCoupon = async (req, res, next) => {
-  try {
-    const { code } = req.body;
-    const coupon = await Coupon.findOne({ where: { code: code?.toUpperCase(), status: 'ACTIVE' } });
-    if (!coupon) throw new AppError('Invalid coupon', 404);
-    const now = new Date();
-    if (now < new Date(coupon.valid_from) || now > new Date(coupon.valid_to)) {
-      throw new AppError('Coupon expired', 400);
-    }
-    res.json({ valid: true, coupon });
-  } catch (err) {
-    next(err);
-  }
+  const couponCtrl = require('./couponController');
+  return couponCtrl.validate(req, res, next);
 };
 
 // Owner endpoints

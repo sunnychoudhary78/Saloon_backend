@@ -134,12 +134,28 @@ function buildFlowBody(config, mobileIntl, otp) {
 }
 
 async function sendOtpSms(mobile, otp) {
+  const isDev =
+    (process.env.NODE_ENV || 'development').toLowerCase() !== 'production' &&
+    (process.env.APP_ENV || 'development').toLowerCase() !== 'production';
+
   const config = await loadSmsConfig();
   if (!config) {
+    if (isDev) {
+      console.log(`[DEV MODE] SMS gateway is disabled or not configured. Use OTP: ${otp}`);
+      return { type: 'success', message: 'dev-local-mock-request' };
+    }
     throw new Error('Failed to send OTP SMS: SMS configuration is incomplete');
   }
 
-  validateConfig(config);
+  try {
+    validateConfig(config);
+  } catch (validationErr) {
+    if (isDev) {
+      console.log(`[DEV MODE] SMS configuration incomplete (${validationErr.message}). Use OTP: ${otp}`);
+      return { type: 'success', message: 'dev-local-mock-request' };
+    }
+    throw validationErr;
+  }
 
   const mobileIntl = formatMobileForMsg91(mobile);
   const body = buildFlowBody(config, mobileIntl, otp);
@@ -167,43 +183,51 @@ async function sendOtpSms(mobile, otp) {
     headers: { authkey: '[REDACTED]', 'Content-Type': 'application/json' },
   });
 
-  const response = await axios.post(MSG91_FLOW_URL, body, {
-    headers: {
-      authkey: config.auth_key.trim(),
-      'Content-Type': 'application/json',
-    },
-    timeout: 15000,
-  });
+  try {
+    const response = await axios.post(MSG91_FLOW_URL, body, {
+      headers: {
+        authkey: config.auth_key.trim(),
+        'Content-Type': 'application/json',
+      },
+      timeout: 15000,
+    });
 
-  const data = response.data;
-  const type = typeof data === 'object' && data ? data.type : null;
-  const requestId =
-    type === 'success' && typeof data?.message === 'string' ? data.message : null;
+    const data = response.data;
+    const type = typeof data === 'object' && data ? data.type : null;
+    const requestId =
+      type === 'success' && typeof data?.message === 'string' ? data.message : null;
 
-  console.log('[MSG91 RESPONSE]', {
-    url: MSG91_FLOW_URL,
-    status: response.status,
-    body: data,
-    requestId,
-    deliveryNote:
-      'API success means accepted for processing. Check MSG91 SMS Logs with requestId for handset delivery / DLT status.',
-  });
+    console.log('[MSG91 RESPONSE]', {
+      url: MSG91_FLOW_URL,
+      status: response.status,
+      body: data,
+      requestId,
+      deliveryNote:
+        'API success means accepted for processing. Check MSG91 SMS Logs with requestId for handset delivery / DLT status.',
+    });
 
-  if (response.status < 200 || response.status >= 300) {
-    throw new Error(`MSG91 SMS failed: ${parseMsg91Error(data)}`);
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`MSG91 SMS failed: ${parseMsg91Error(data)}`);
+    }
+
+    if (type && type !== 'success') {
+      throw new Error(`MSG91 SMS failed: ${parseMsg91Error(data)}`);
+    }
+
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(
+        `[OTP SMS] MSG91 Flow sent to ${mobileIntl}, status=${response.status}, requestId=${requestId || 'n/a'}`
+      );
+    }
+
+    return data;
+  } catch (error) {
+    if (isDev) {
+      console.log(`[DEV MODE] SMS dispatch error (${error.message}). Allowing local OTP: ${otp}`);
+      return { type: 'success', message: 'dev-local-mock-request' };
+    }
+    throw error;
   }
-
-  if (type && type !== 'success') {
-    throw new Error(`MSG91 SMS failed: ${parseMsg91Error(data)}`);
-  }
-
-  if (process.env.NODE_ENV !== 'production') {
-    console.log(
-      `[OTP SMS] MSG91 Flow sent to ${mobileIntl}, status=${response.status}, requestId=${requestId || 'n/a'}`
-    );
-  }
-
-  return data;
 }
 
 module.exports = {

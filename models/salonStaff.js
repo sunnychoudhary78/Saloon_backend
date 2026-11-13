@@ -10,6 +10,8 @@ module.exports = (sequelize, DataTypes) => {
       },
       salon_id: { type: DataTypes.UUID, allowNull: false },
       name: { type: DataTypes.STRING, allowNull: false },
+      title: { type: DataTypes.STRING(100), allowNull: true },
+      specializations: { type: DataTypes.JSONB, allowNull: true, defaultValue: [] },
       profile_image: { type: DataTypes.STRING, allowNull: true },
       status: {
         type: DataTypes.ENUM('ACTIVE', 'INACTIVE'),
@@ -28,6 +30,7 @@ module.exports = (sequelize, DataTypes) => {
   SalonStaff.associate = (models) => {
     SalonStaff.belongsTo(models.Salon, { foreignKey: 'salon_id', as: 'salon' });
     SalonStaff.hasMany(models.Booking, { foreignKey: 'staff_id', as: 'bookings' });
+    SalonStaff.hasMany(models.SalonGalleryPost, { foreignKey: 'staff_id', as: 'gallery_posts' });
   };
 
   return SalonStaff;

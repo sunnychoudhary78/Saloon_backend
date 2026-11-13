@@ -1,11 +1,20 @@
 const express = require('express');
 const router = express.Router();
 const authMiddleware = require('../middlewares/authMiddleware');
+const { optionalAuthMiddleware } = require('../middlewares/authMiddleware');
 const roleMiddleware = require('../middlewares/roleMiddleware');
 const permissionMiddleware = require('../middlewares/permissionMiddleware');
 const asyncHandler = require('../middlewares/asyncHandler');
 const ctrl = require('../controllers/appController');
 const appAuthCtrl = require('../controllers/appAuthController');
+const galleryCtrl = require('../controllers/galleryController');
+const couponCtrl = require('../controllers/couponController');
+const rewardCtrl = require('../controllers/rewardController');
+const {
+  validateCreateGalleryPost,
+  validateUpdateGalleryPost,
+  validateConsent,
+} = require('../validators/galleryValidator');
 const {
   validateBooking,
   validateSalonApplication,
@@ -36,7 +45,7 @@ const favoriteCtrl = require('../controllers/favoriteController');
 const { validateCreateFavorite } = require('../validators/favoriteValidator');
 const notificationCtrl = require('../controllers/notificationController');
 const { validateListNotifications } = require('../validators/notificationValidator');
-const { uploadSalonImages, uploadProfileImage, uploadStaffImage } = require('../middlewares/upload');
+const { uploadSalonImages, uploadProfileImage, uploadStaffImage, uploadGalleryImages } = require('../middlewares/upload');
 const {
   validateOwnerDashboardQuery,
   validateOwnerDashboardScheduleQuery,
@@ -78,7 +87,10 @@ router.get('/notifications/unread-count', authMiddleware, asyncHandler(notificat
 router.patch('/notifications/read-all', authMiddleware, asyncHandler(notificationCtrl.markAllRead));
 router.patch('/notifications/:id/read', authMiddleware, asyncHandler(notificationCtrl.markRead));
 router.get('/banners', authMiddleware, asyncHandler(ctrl.getBanners));
+router.get('/coupons', authMiddleware, asyncHandler(couponCtrl.listPublic));
 router.post('/coupons/validate', authMiddleware, asyncHandler(ctrl.validateCoupon));
+router.get('/rewards/my-rewards', authMiddleware, roleMiddleware(['CUSTOMER']), asyncHandler(rewardCtrl.getMyRewards));
+router.post('/rewards/:id/claim', authMiddleware, roleMiddleware(['CUSTOMER']), asyncHandler(rewardCtrl.claimReward));
 router.get('/places/search', authMiddleware, roleMiddleware(['CUSTOMER', 'SALON_OWNER']), asyncHandler(ctrl.searchPlaces));
 router.get('/places/details', authMiddleware, roleMiddleware(['CUSTOMER', 'SALON_OWNER']), asyncHandler(ctrl.getPlaceDetails));
 router.get('/places/reverse', authMiddleware, roleMiddleware(['CUSTOMER', 'SALON_OWNER']), asyncHandler(ctrl.reverseGeocodePlace));
@@ -100,6 +112,13 @@ router.post('/reviews', authMiddleware, roleMiddleware(['CUSTOMER']), validateRe
 router.get('/favorites', authMiddleware, roleMiddleware(['CUSTOMER']), asyncHandler(favoriteCtrl.listFavorites));
 router.post('/favorites', authMiddleware, roleMiddleware(['CUSTOMER']), validateCreateFavorite, asyncHandler(favoriteCtrl.addFavorite));
 router.delete('/favorites/:salonId', authMiddleware, roleMiddleware(['CUSTOMER']), asyncHandler(favoriteCtrl.removeFavorite));
+
+// Customer Gallery & Stylist Portfolio
+router.get('/salons/:salonId/gallery', optionalAuthMiddleware, asyncHandler(galleryCtrl.publicListSalonGallery));
+router.get('/staff/:staffId/portfolio', optionalAuthMiddleware, asyncHandler(galleryCtrl.publicListStaffPortfolio));
+router.post('/gallery/:postId/like', authMiddleware, asyncHandler(galleryCtrl.toggleLikePost));
+router.get('/customer/my-transformations', authMiddleware, asyncHandler(galleryCtrl.customerMyTransformations));
+router.put('/customer/my-transformations/:postId/consent', authMiddleware, validateConsent, asyncHandler(galleryCtrl.customerUpdateConsent));
 
 // Salon owner registration & applications
 router.post('/salon-owner/register', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.registerSalonOwner));
@@ -148,5 +167,37 @@ router.get('/owner/payout-account', authMiddleware, roleMiddleware(['SALON_OWNER
 router.put('/owner/payout-account', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.upsertOwnerPayoutAccount));
 router.patch('/owner/booking-groups/:groupId/confirm-cash', authMiddleware, roleMiddleware(['SALON_OWNER']), validateConfirmCash, asyncHandler(ctrl.confirmBookingGroupCash));
 router.get('/owner/reviews', authMiddleware, roleMiddleware(['SALON_OWNER']), asyncHandler(ctrl.getOwnerReviews));
+
+// Owner Salon Gallery
+router.post(
+  '/owner/salons/:salonId/gallery',
+  authMiddleware,
+  roleMiddleware(['SALON_OWNER']),
+  uploadGalleryImages,
+  validateCreateGalleryPost,
+  asyncHandler(galleryCtrl.ownerCreatePost),
+);
+router.get(
+  '/owner/salons/:salonId/gallery',
+  authMiddleware,
+  roleMiddleware(['SALON_OWNER']),
+  asyncHandler(galleryCtrl.ownerListPosts),
+);
+router.put(
+  '/owner/gallery/:postId',
+  authMiddleware,
+  roleMiddleware(['SALON_OWNER']),
+  validateUpdateGalleryPost,
+  asyncHandler(galleryCtrl.ownerUpdatePost),
+);
+router.delete(
+  '/owner/gallery/:postId',
+  authMiddleware,
+  roleMiddleware(['SALON_OWNER']),
+  asyncHandler(galleryCtrl.ownerDeletePost),
+);
+
+// AI Hair Stylist
+router.use('/ai-stylist', require('./aiStylistRoutes'));
 
 module.exports = router;

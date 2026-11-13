@@ -150,6 +150,14 @@ function notifyBookingCompleted(bookingId) {
     const userId = customerUserId(booking);
     if (!userId) return;
     sendToUserAsync(userId, templates.bookingCompleted(booking, salonName(booking)));
+    
+    // Auto-award mystery reward on appointment completion
+    try {
+      const { awardMysteryReward } = require('../controllers/rewardController');
+      awardMysteryReward(bookingId).catch((err) => console.error('[reward] awardMysteryReward:', err.message));
+    } catch (e) {
+      console.error('[reward] load error:', e.message);
+    }
   }).catch((err) => console.error('[push] notifyBookingCompleted:', err.message));
 }
 

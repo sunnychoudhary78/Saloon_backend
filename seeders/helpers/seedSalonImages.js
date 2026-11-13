@@ -16,17 +16,26 @@ function parseImageNumber(filename) {
   return parseInt(match[1], 10);
 }
 
+function parseSeedOutputNumber(filename) {
+  const match = /^seed-(\d+)\.jpg$/i.exec(filename);
+  if (!match) return null;
+  return parseInt(match[1], 10);
+}
+
 /**
  * Converts seed-salons/{N}.* to uploads/salons/seed-{N}.jpg
  * Returns a map: { 1: 'http://.../seed-1.jpg', 2: '...', ... }
  */
 async function prepareSeedSalonImages() {
   fs.mkdirSync(SALON_OUTPUT_DIR, { recursive: true });
+  fs.mkdirSync(SEED_SOURCE_DIR, { recursive: true });
 
-  const files = fs
-    .readdirSync(SEED_SOURCE_DIR)
-    .filter((f) => parseImageNumber(f) !== null)
-    .sort((a, b) => parseImageNumber(a) - parseImageNumber(b));
+  const files = fs.existsSync(SEED_SOURCE_DIR)
+    ? fs
+        .readdirSync(SEED_SOURCE_DIR)
+        .filter((f) => parseImageNumber(f) !== null)
+        .sort((a, b) => parseImageNumber(a) - parseImageNumber(b))
+    : [];
 
   const urlMap = {};
 
@@ -47,14 +56,26 @@ async function prepareSeedSalonImages() {
     urlMap[num] = `${API_BASE}/uploads/salons/${outputName}`;
   }
 
+  // Pick up already-processed outputs even when source files are absent
+  if (fs.existsSync(SALON_OUTPUT_DIR)) {
+    const outputFiles = fs
+      .readdirSync(SALON_OUTPUT_DIR)
+      .filter((f) => parseSeedOutputNumber(f) !== null);
+
+    for (const file of outputFiles) {
+      const num = parseSeedOutputNumber(file);
+      if (!urlMap[num]) {
+        urlMap[num] = `${API_BASE}/uploads/salons/${file}`;
+      }
+    }
+  }
+
   return urlMap;
 }
 
 function imageUrls(urlMap, ids) {
   return ids.map((id) => {
-    const url = urlMap[id];
-    if (!url) throw new Error(`Missing seed image for id ${id}`);
-    return url;
+    return urlMap[id] || `${API_BASE}/uploads/salons/seed-${id}.jpg`;
   });
 }
 

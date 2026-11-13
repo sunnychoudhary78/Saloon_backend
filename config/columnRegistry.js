@@ -209,6 +209,7 @@ const reviewRegistry = [
 ];
 
 const couponRegistry = [
+  { key: "title", label: "Title", path: "title", type: "string" },
   { key: "code", label: "Code", path: "code", type: "string" },
   {
     key: "discount_type",
@@ -222,9 +223,25 @@ const couponRegistry = [
     path: "discount_value",
     type: "number",
   },
+  {
+    key: "min_order_value",
+    label: "Min Order",
+    path: "min_order_value",
+    type: "number",
+  },
   { key: "valid_from", label: "Valid From", path: "valid_from", type: "date" },
   { key: "valid_to", label: "Valid To", path: "valid_to", type: "date" },
   { key: "status", label: "Status", path: "status", type: "string" },
+];
+
+const rewardRegistry = [
+  { key: "brand_name", label: "Brand", path: "brand_name", type: "string" },
+  { key: "title", label: "Title", path: "title", type: "string" },
+  { key: "reward_code", label: "Code", path: "reward_code", type: "string" },
+  { key: "reward_type", label: "Type", path: "reward_type", type: "string" },
+  { key: "validity_days", label: "Validity (Days)", path: "validity_days", type: "number" },
+  { key: "status", label: "Status", path: "status", type: "string" },
+  { key: "created_at", label: "Created At", path: "created_at", type: "date" },
 ];
 
 const bannerRegistry = [
@@ -289,6 +306,7 @@ module.exports = {
   bookingRegistryByKey: toRegistryMap(bookingRegistry),
   reviewRegistryByKey: toRegistryMap(reviewRegistry),
   couponRegistryByKey: toRegistryMap(couponRegistry),
+  rewardRegistryByKey: toRegistryMap(rewardRegistry),
   bannerRegistryByKey: toRegistryMap(bannerRegistry),
   auditLogRegistryByKey: toRegistryMap(auditLogRegistry),
   rolesRegistryByKey: toRegistryMap(rolesRegistry),

@@ -139,3 +139,153 @@ const uploadStaffImage = multer({
 });
 
 module.exports.uploadStaffImage = uploadStaffImage;
+
+const galleryImageStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const dir = path.join(__dirname, "../uploads/gallery");
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch (_) {}
+    cb(null, dir);
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    const prefix = file.fieldname === "before_image" ? "before" : "after";
+    const random = Math.random().toString(36).substring(2, 10);
+    const timestamp = Date.now();
+    cb(null, `${prefix}-${timestamp}-${random}${ext}`);
+  },
+});
+
+const uploadGalleryImages = multer({
+  storage: galleryImageStorage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = ["image/png", "image/jpeg", "image/jpg", "image/webp"];
+    if (allowedTypes.includes(file.mimetype)) cb(null, true);
+    else cb(new Error("Only PNG, JPEG, JPG, and WEBP images are allowed"));
+  },
+}).fields([
+  { name: "before_image", maxCount: 1 },
+  { name: "after_image", maxCount: 1 },
+]);
+
+module.exports.uploadGalleryImages = uploadGalleryImages;
+
+const bannerImageStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const dir = path.join(__dirname, "../uploads/banners");
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch (_) {}
+    cb(null, dir);
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    const random = Math.random().toString(36).substring(2, 10);
+    const timestamp = Date.now();
+    cb(null, `banner-${timestamp}-${random}${ext}`);
+  },
+});
+
+const uploadBannerImage = multer({
+  storage: bannerImageStorage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = ["image/png", "image/jpeg", "image/jpg", "image/webp"];
+    if (allowedTypes.includes(file.mimetype)) cb(null, true);
+    else cb(new Error("Only PNG, JPEG, JPG, and WEBP images are allowed"));
+  },
+}).single("image");
+
+module.exports.uploadBannerImage = uploadBannerImage;
+
+const couponImageStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const dir = path.join(__dirname, "../uploads/coupons");
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch (_) {}
+    cb(null, dir);
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    const random = Math.random().toString(36).substring(2, 10);
+    const timestamp = Date.now();
+    cb(null, `coupon-${timestamp}-${random}${ext}`);
+  },
+});
+
+const uploadCouponImage = multer({
+  storage: couponImageStorage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = ["image/png", "image/jpeg", "image/jpg", "image/webp"];
+    if (allowedTypes.includes(file.mimetype)) cb(null, true);
+    else cb(new Error("Only PNG, JPEG, JPG, and WEBP images are allowed"));
+  },
+}).single("image");
+
+module.exports.uploadCouponImage = uploadCouponImage;
+
+const rewardImageStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const dir = path.join(__dirname, "../uploads/rewards");
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch (_) {}
+    cb(null, dir);
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    const random = Math.random().toString(36).substring(2, 10);
+    const timestamp = Date.now();
+    cb(null, `reward-${timestamp}-${random}${ext}`);
+  },
+});
+
+const uploadRewardImage = multer({
+  storage: rewardImageStorage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = ["image/png", "image/jpeg", "image/jpg", "image/webp"];
+    if (allowedTypes.includes(file.mimetype)) cb(null, true);
+    else cb(new Error("Only PNG, JPEG, JPG, and WEBP images are allowed"));
+  },
+}).single("image");
+
+module.exports.uploadRewardImage = uploadRewardImage;
+
+const aiScanStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const dir = path.join(__dirname, "../uploads/ai-scans");
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch (_) {}
+    cb(null, dir);
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase() || ".jpg";
+    const field = file.fieldname || "scan";
+    const random = Math.random().toString(36).substring(2, 10);
+    const timestamp = Date.now();
+    cb(null, `ai-${field}-${timestamp}-${random}${ext}`);
+  },
+});
+
+const uploadAiFaceImages = multer({
+  storage: aiScanStorage,
+  limits: { fileSize: 8 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = ["image/png", "image/jpeg", "image/jpg", "image/webp"];
+    if (allowedTypes.includes(file.mimetype)) cb(null, true);
+    else cb(new Error("Only PNG, JPEG, JPG, and WEBP images are allowed"));
+  },
+}).fields([
+  { name: "front", maxCount: 1 },
+  { name: "left", maxCount: 1 },
+  { name: "right", maxCount: 1 },
+  { name: "hair_mask", maxCount: 1 },
+]);
+
+module.exports.uploadAiFaceImages = uploadAiFaceImages;

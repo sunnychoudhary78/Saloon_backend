@@ -3,12 +3,11 @@
 const https = require('https');
 const axios = require('axios');
 const sharp = require('sharp');
+const FormData = require('form-data');
 const AppError = require('../middlewares/AppError');
 const { logger } = require('../utils/logger');
 
-const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 const OPENAI_BASE_URL = 'https://api.openai.com/v1';
-const CLOUDFLARE_BASE_URL = 'https://api.cloudflare.com/client/v4/accounts';
 
 // Force IPv4 to avoid Node/Linux IPv6 stall timeouts when contacting AI APIs.
 const ipv4Agent = new https.Agent({ family: 4, keepAlive: true });
@@ -163,7 +162,7 @@ async function callOpenAiJson({ systemPrompt, userPrompt, images = [], history =
   if (!apiKey) {
     throw new Error('OPENAI_API_KEY is not configured');
   }
-  const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+  const model = process.env.OPENAI_MODEL || 'gpt-4o';
 
   const messages = [{ role: 'system', content: systemPrompt }];
 
@@ -219,39 +218,27 @@ async function callOpenAiJson({ systemPrompt, userPrompt, images = [], history =
 }
 
 /**
- * Runs structured multimodal or text generation with Gemini model chain primary
- * and OpenAI fallback.
+ * Runs structured multimodal or text generation with OpenAI primary.
  */
 async function generateStructuredWithFallback(params) {
-  const errors = [];
-
-  if (process.env.GEMINI_API_KEY) {
-    try {
-      return await callGeminiJson(params);
-    } catch (err) {
-      const msg = err.response?.data?.error?.message || err.message;
-      errors.push(`Gemini: ${msg}`);
-      logger.warn({ err: msg }, 'Gemini chain failed, attempting OpenAI fallback');
-    }
-  }
-
   if (process.env.OPENAI_API_KEY) {
     try {
       return await callOpenAiJson(params);
     } catch (err) {
       const msg = err.response?.data?.error?.message || err.message;
-      errors.push(`OpenAI: ${msg}`);
-      logger.error({ err: msg }, 'OpenAI fallback call failed');
+      logger.error({ err: msg }, 'OpenAI structured generation failed');
+      throw new AppError(
+        `AI Stylist request failed: ${msg}`,
+        500,
+        { code: 'OPENAI_ERROR', details: msg }
+      );
     }
   }
 
   throw new AppError(
-    'AI stylist is currently busy or at its quota limit. Please try again in a moment.',
+    'AI stylist is currently unavailable. Please configure OPENAI_API_KEY.',
     503,
-    {
-      code: 'AI_PROVIDER_UNAVAILABLE',
-      details: errors,
-    }
+    { code: 'AI_PROVIDER_UNAVAILABLE' }
   );
 }
 
@@ -333,55 +320,68 @@ async function generateHairTryOnWithOpenAi({
     throw new Error('OPENAI_API_KEY is not configured');
   }
 
-  const imageModel = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1';
+  const imageModel = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1-mini';
+
+  const scaledFront = await sharp(frontPngBuffer)
+    .resize(1024, 1024, { fit: 'cover', position: 'center' })
+    .ensureAlpha()
+    .png()
+    .toBuffer();
+
   const form = new FormData();
   form.append('model', imageModel);
   form.append('prompt', prompt);
-  form.append('size', '1024x1024');
-  form.append(
-    'image',
-    new Blob([frontPngBuffer], { type: 'image/png' }),
-    'front.png'
-  );
+  form.append('n', 1);
+  form.append('image', scaledFront, { filename: 'front.png', contentType: 'image/png' });
+
   if (maskPngBuffer) {
-    form.append(
-      'mask',
-      new Blob([maskPngBuffer], { type: 'image/png' }),
-      'mask.png'
-    );
+    const scaledMask = await sharp(maskPngBuffer)
+      .resize(1024, 1024, { fit: 'cover', position: 'center' })
+      .ensureAlpha()
+      .png()
+      .toBuffer();
+    form.append('mask', scaledMask, { filename: 'mask.png', contentType: 'image/png' });
   }
 
   const response = await axios.post(`${OPENAI_BASE_URL}/images/edits`, form, {
     headers: {
       Authorization: `Bearer ${apiKey}`,
+      ...form.getHeaders(),
     },
     httpsAgent: ipv4Agent,
-    timeout: 90000,
+    timeout: 60000,
     maxBodyLength: Infinity,
   });
 
   const item = response.data?.data?.[0];
+  let rawBuffer = null;
+
   if (item?.b64_json) {
-    return {
-      provider: 'openai',
-      model: imageModel,
-      buffer: Buffer.from(item.b64_json, 'base64'),
-    };
-  }
-  if (item?.url) {
+    rawBuffer = Buffer.from(item.b64_json, 'base64');
+  } else if (item?.url) {
     const imgResp = await axios.get(item.url, {
       responseType: 'arraybuffer',
       httpsAgent: ipv4Agent,
       timeout: 30000,
     });
+    rawBuffer = Buffer.from(imgResp.data);
+  }
+
+  if (rawBuffer) {
+    // Deliver high quality optimized image with the generated hairstyle
+    const optimizedBuffer = await sharp(rawBuffer)
+      .resize(768, 768, { fit: 'cover', position: 'center' })
+      .jpeg({ quality: 90, mozjpeg: true })
+      .toBuffer();
+
     return {
       provider: 'openai',
       model: imageModel,
-      buffer: Buffer.from(imgResp.data),
+      buffer: optimizedBuffer,
     };
   }
 
-  throw new Error('Image edit API did not return an image');
+  throw new Error('OpenAI image edit API did not return an image');
 }
 
 async function createAutoHairMask(width = 512, height = 512) {
@@ -523,41 +523,13 @@ async function generateHairTryOnWithCloudflare({
 }
 
 /**
- * Generates a virtual hairstyle try-on image.
- * Uses Cloudflare Workers AI primary (fast, free daily neurons),
- * with Gemini and OpenAI image generation as fallbacks.
+ * Generates a virtual hairstyle try-on image using OpenAI image edits API.
  */
 async function generateHairTryOn({
   frontPngBuffer,
   maskPngBuffer = null,
   prompt,
 }) {
-  const errors = [];
-
-  if (process.env.CLOUDFLARE_ACCOUNT_ID && process.env.CLOUDFLARE_API_TOKEN) {
-    try {
-      return await generateHairTryOnWithCloudflare({
-        frontPngBuffer,
-        maskPngBuffer,
-        prompt,
-      });
-    } catch (err) {
-      const msg = err.response?.data?.toString() || err.message;
-      errors.push(`Cloudflare Workers AI: ${msg}`);
-      logger.warn({ err: msg }, 'Cloudflare Try-On failed, trying Gemini');
-    }
-  }
-
-  if (process.env.GEMINI_API_KEY) {
-    try {
-      return await generateHairTryOnWithGemini({ frontPngBuffer, prompt });
-    } catch (err) {
-      const msg = err.response?.data?.error?.message || err.message;
-      errors.push(`Gemini Image: ${msg}`);
-      logger.warn({ err: msg }, 'Gemini try-on failed, trying OpenAI fallback');
-    }
-  }
-
   if (process.env.OPENAI_API_KEY) {
     try {
       return await generateHairTryOnWithOpenAi({
@@ -567,25 +539,26 @@ async function generateHairTryOn({
       });
     } catch (err) {
       const msg = err.response?.data?.error?.message || err.message;
-      errors.push(`OpenAI Image: ${msg}`);
-      logger.error({ err: msg }, 'OpenAI try-on failed');
+      logger.error({ err: msg }, 'OpenAI hair try-on failed');
+      throw new AppError(
+        `OpenAI Virtual Try-On failed: ${msg}`,
+        500,
+        { code: 'TRYON_ERROR', details: msg }
+      );
     }
   }
 
   throw new AppError(
-    'Virtual Try-On is currently unavailable across all AI providers. Please try again later.',
+    'Virtual Try-On is currently unavailable. Please configure OPENAI_API_KEY.',
     503,
-    {
-      code: 'TRYON_QUOTA_UNAVAILABLE',
-      details: errors,
-    }
+    { code: 'TRYON_UNAVAILABLE' }
   );
 }
 
 /**
  * Generates a photorealistic preview image for a recommended hairstyle
  * tailored to the person's face shape, gender, and hair type.
- * Uses Cloudflare Workers AI Flux-1-schnell model with fallbacks.
+ * Uses OpenAI image generation API.
  */
 async function generateHairstylePreviewImage({
   hairstyleName,
@@ -593,8 +566,8 @@ async function generateHairstylePreviewImage({
   gender = 'men',
   hairType = 'straight',
 }) {
-  const accountId = (process.env.CLOUDFLARE_ACCOUNT_ID || '').trim();
-  const apiToken = (process.env.CLOUDFLARE_API_TOKEN || '').trim();
+  const apiKey = (process.env.OPENAI_API_KEY || '').trim();
+  if (!apiKey) return null;
 
   const promptGender = gender === 'women' ? 'woman' : 'man';
   const promptFace = faceShape ? `with a flattering ${faceShape} face shape` : '';
@@ -602,90 +575,41 @@ async function generateHairstylePreviewImage({
 
   const prompt = `Close-up studio lookbook portrait of an attractive ${promptGender} ${promptFace}, featuring a stylish "${hairstyleName}" hairstyle, ${promptHair}, sharp focus on the haircut details, clean hairline, professional salon lighting, 8k resolution, photorealistic salon portfolio photo, neutral blurred background`;
 
-  // 1. Cloudflare Workers AI Flux
-  if (accountId && apiToken) {
-    try {
-      const fluxModel =
-        (process.env.CLOUDFLARE_FLUX_MODEL || '').trim() ||
-        '@cf/black-forest-labs/flux-1-schnell';
-      const url = `${CLOUDFLARE_BASE_URL}/${accountId}/ai/run/${fluxModel}`;
-
-      const response = await axios.post(
-        url,
-        { prompt },
-        {
-          headers: {
-            Authorization: `Bearer ${apiToken}`,
-            'Content-Type': 'application/json',
-          },
-          httpsAgent: ipv4Agent,
-          timeout: 25000,
-        }
-      );
-
-      let imageBuffer = null;
-      if (response.data?.result?.image) {
-        imageBuffer = Buffer.from(response.data.result.image, 'base64');
-      } else if (Buffer.isBuffer(response.data)) {
-        imageBuffer = response.data;
-      }
-
-      if (imageBuffer && imageBuffer.length > 1000) {
-        const optimized = await sharp(imageBuffer)
-          .resize(512, 512, { fit: 'cover', position: 'center' })
-          .jpeg({ quality: 85, mozjpeg: true })
-          .toBuffer();
-
-        return {
-          buffer: optimized,
-          provider: 'cloudflare',
-          model: fluxModel,
-        };
-      }
-    } catch (err) {
-      const msg = err.response?.data ? JSON.stringify(err.response.data) : err.message;
-      logger.warn(
-        { err: msg, hairstyleName },
-        'Cloudflare hairstyle preview generation failed'
-      );
-    }
-  }
-
-  // 2. Gemini Image fallback
-  if (process.env.GEMINI_API_KEY) {
-    try {
-      const geminiModel =
-        (process.env.GEMINI_IMAGE_MODEL || '').trim() || 'gemini-3.1-flash-image';
-      const url = `${GEMINI_BASE_URL}/${encodeURIComponent(geminiModel)}:generateImages`;
-      const res = await axios.post(
-        url,
-        {
-          prompt,
-          number_of_images: 1,
-          output_mime_type: 'image/jpeg',
-          aspect_ratio: '1:1',
+  try {
+    const res = await axios.post(
+      `${OPENAI_BASE_URL}/images/generations`,
+      {
+        model: process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1-mini',
+        prompt,
+        n: 1,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
         },
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': process.env.GEMINI_API_KEY,
-          },
-          httpsAgent: ipv4Agent,
-          timeout: 25000,
-        }
-      );
-      const b64 = res.data?.generated_images?.[0]?.image?.image_bytes;
-      if (b64) {
-        const rawBuf = Buffer.from(b64, 'base64');
-        const optimized = await sharp(rawBuf)
-          .resize(512, 512, { fit: 'cover' })
-          .jpeg({ quality: 85 })
-          .toBuffer();
-        return { buffer: optimized, provider: 'gemini', model: geminiModel };
+        httpsAgent: ipv4Agent,
+        timeout: 25000,
       }
-    } catch (gErr) {
-      logger.warn({ err: gErr.message }, 'Gemini preview image fallback failed');
+    );
+
+    const b64 = res.data?.data?.[0]?.b64_json;
+    if (b64) {
+      const rawBuf = Buffer.from(b64, 'base64');
+      const optimized = await sharp(rawBuf)
+        .resize(512, 512, { fit: 'cover', position: 'center' })
+        .jpeg({ quality: 85, mozjpeg: true })
+        .toBuffer();
+
+      return {
+        buffer: optimized,
+        provider: 'openai',
+        model: process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1-mini',
+      };
     }
+  } catch (err) {
+    const msg = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+    logger.warn({ err: msg, hairstyleName }, 'OpenAI hairstyle preview generation failed');
   }
 
   return null;

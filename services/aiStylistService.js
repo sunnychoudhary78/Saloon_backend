@@ -679,7 +679,7 @@ async function generateVirtualTryOn({
 
   const colorClause = hairColor ? ` with natural ${hairColor} hair color` : '';
   const detailClause = hairstylePrompt ? ` (${hairstylePrompt})` : '';
-  const prompt = `Keep the person's exact face, eyes, nose, lips, skin tone, facial structure, ears, clothing, and background completely unchanged. Only change the hairstyle to a realistic, salon-finished "${hairstyleName}"${detailClause}${colorClause}. Natural studio lighting, photorealistic hair texture.`;
+  const prompt = `Change ONLY the person's hairstyle to a stylish, clearly visible, well-defined "${hairstyleName}" haircut${detailClause}${colorClause}. Keep the person's face, eyes, eyebrows, nose, mouth, facial features, skin tone, and clothing unchanged and identical to the original photo. Professional salon haircut details, clean hairline, photorealistic texture.`;
 
   const generated = await generateHairTryOn({
     frontPngBuffer,

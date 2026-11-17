@@ -197,7 +197,7 @@ module.exports = {
       SELECT r.id, p.id, NOW(), NOW()
       FROM "${schema}"."roles" r
       CROSS JOIN "${schema}"."permissions" p
-      WHERE r.name IN ('super_admin', 'admin', 'Super Admin', 'Admin')
+      WHERE r.name IN ('SUPER_ADMIN', 'ADMIN', 'super_admin', 'admin', 'Super Admin', 'Admin')
         AND p.name IN ('reward.read', 'reward.create', 'reward.update', 'reward.delete')
         AND NOT EXISTS (
           SELECT 1 FROM "${schema}"."role_permissions" rp

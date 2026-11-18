@@ -14,6 +14,8 @@ const {
   Booking,
   Review,
   Coupon,
+  Reward,
+  CustomerReward,
   PromotionalBanner,
   Payment,
   PaymentLineItem,
@@ -78,6 +80,141 @@ const {
   resolveServiceFor,
 } = require('../services/serviceIdentityService');
 const { serviceNamesForSalonType } = require('../constants/salonServiceNames');
+const { calculateVoucherDiscount } = require('../services/rewardSelectionService');
+
+async function applyBookingVoucher({
+  customerId,
+  couponCode,
+  customerRewardId,
+  orderTotal,
+  primaryBooking,
+  transaction,
+}) {
+  if (!primaryBooking) return;
+  const cleanCode = couponCode ? String(couponCode).trim().toUpperCase() : null;
+  if (!cleanCode && !customerRewardId) return;
+
+  const now = new Date();
+
+  // 1. Check personal unlocked SALON_DISCOUNT reward first if customerRewardId was supplied,
+  //    or if code does not match a public coupon.
+  let personalReward = null;
+  if (customerRewardId) {
+    personalReward = await CustomerReward.findOne({
+      where: { id: customerRewardId, customer_id: customerId },
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+    if (!personalReward) throw new AppError('Reward voucher not found', 404);
+  } else if (cleanCode) {
+    const publicCheck = await Coupon.findOne({
+      where: { code: cleanCode, status: 'ACTIVE', is_active: true },
+      transaction,
+    });
+    if (!publicCheck) {
+      personalReward = await CustomerReward.findOne({
+        where: {
+          customer_id: customerId,
+          status: 'CLAIMED',
+          issued_code: cleanCode,
+        },
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+    }
+  }
+
+  if (personalReward) {
+    if (personalReward.status !== 'CLAIMED') {
+      throw new AppError('This reward voucher has already been redeemed or is not claimed', 400);
+    }
+    if (new Date(personalReward.expires_at) < now) {
+      personalReward.status = 'EXPIRED';
+      await personalReward.save({ transaction });
+      throw new AppError('This reward voucher has expired', 400);
+    }
+    const reward = await Reward.findByPk(personalReward.reward_id, { transaction });
+    if (!reward || reward.reward_type !== 'SALON_DISCOUNT' || !reward.discount_value || Number(reward.discount_value) <= 0) {
+      throw new AppError('This reward cannot be applied to salon bookings', 400);
+    }
+
+    const calc = calculateVoucherDiscount({
+      discountType: reward.discount_type || 'FLAT',
+      discountValue: reward.discount_value,
+      orderAmount: orderTotal,
+      minOrderValue: reward.min_order_value,
+      maxDiscountAmount: reward.max_discount_amount,
+    });
+    if (!calc.eligible) throw new AppError(calc.reason, 400);
+
+    primaryBooking.coupon_code = personalReward.issued_code || reward.reward_code;
+    primaryBooking.customer_reward_id = personalReward.id;
+    primaryBooking.discount_amount = calc.discountAmount;
+    await primaryBooking.save({ transaction });
+
+    personalReward.status = 'REDEEMED';
+    personalReward.redeemed_at = now;
+    personalReward.redeemed_booking_id = primaryBooking.id;
+    await personalReward.save({ transaction });
+    return;
+  }
+
+  // 2. Otherwise apply public Coupon
+  if (cleanCode) {
+    const coupon = await Coupon.findOne({
+      where: { code: cleanCode, status: 'ACTIVE', is_active: true },
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+    if (!coupon) throw new AppError('Invalid or already redeemed coupon code', 404);
+    if (now < new Date(coupon.valid_from) || now > new Date(coupon.valid_to)) {
+      throw new AppError('Coupon has expired or is not yet active', 400);
+    }
+    if (coupon.usage_limit && coupon.used_count >= coupon.usage_limit) {
+      throw new AppError('Coupon usage limit reached', 400);
+    }
+
+    const calc = calculateVoucherDiscount({
+      discountType: coupon.discount_type,
+      discountValue: coupon.discount_value,
+      orderAmount: orderTotal,
+      minOrderValue: coupon.min_order_value,
+      maxDiscountAmount: coupon.max_discount_amount,
+    });
+    if (!calc.eligible) throw new AppError(calc.reason, 400);
+
+    primaryBooking.coupon_code = coupon.code;
+    primaryBooking.discount_amount = calc.discountAmount;
+    await primaryBooking.save({ transaction });
+
+    coupon.used_count = Number(coupon.used_count || 0) + 1;
+    await coupon.save({ transaction });
+  }
+}
+
+async function restoreRedeemedRewardsForGroup(group, transaction) {
+  const bookingIds = group.map((b) => b.id);
+  const rewardIds = [...new Set(group.map((b) => b.customer_reward_id).filter(Boolean))];
+  if (rewardIds.length === 0) return;
+
+  const now = new Date();
+  const redeemedRows = await CustomerReward.findAll({
+    where: {
+      id: { [Op.in]: rewardIds },
+      status: 'REDEEMED',
+      redeemed_booking_id: { [Op.in]: bookingIds },
+    },
+    transaction,
+    lock: transaction.LOCK.UPDATE,
+  });
+
+  for (const cr of redeemedRows) {
+    cr.status = new Date(cr.expires_at) >= now ? 'CLAIMED' : 'EXPIRED';
+    cr.redeemed_at = null;
+    cr.redeemed_booking_id = null;
+    await cr.save({ transaction });
+  }
+}
 const {
   attachRatingSummary,
   getBatchSalonRatingSummaries,
@@ -1078,6 +1215,8 @@ exports.createBooking = async (req, res, next) => {
       is_premium: isPremium,
       staff_id: staffIdBody,
       merge_into_group_id: mergeIntoGroupId,
+      coupon_code: couponCodeBody,
+      customer_reward_id: customerRewardIdBody,
     } = req.body;
 
     const serviceIds = Array.isArray(serviceIdsBody) && serviceIdsBody.length > 0
@@ -1245,6 +1384,7 @@ exports.createBooking = async (req, res, next) => {
       // All services requested together share one group id so the salon can
       // accept/reject/cancel them as a single logical booking.
       const bookingGroupId = crypto.randomUUID();
+      let requestSubtotal = 0;
 
       for (let i = 0; i < serviceIds.length; i += 1) {
         const currentServiceId = serviceIds[i];
@@ -1254,6 +1394,12 @@ exports.createBooking = async (req, res, next) => {
           transaction: t,
         });
         if (!service) throw new AppError(`Service not found: ${currentServiceId}`, 404);
+
+        const basePrice = Number(service.price) || 0;
+        const discPrice = Number(service.discount_price);
+        requestSubtotal += (Number.isFinite(discPrice) && discPrice > 0 && discPrice < basePrice)
+          ? discPrice
+          : basePrice;
 
         await assertCustomerServiceSlotFree(
           salon_id,
@@ -1287,6 +1433,18 @@ exports.createBooking = async (req, res, next) => {
 
         createdBookings.push(booking);
       }
+
+      if (createdBookings[0] && (couponCodeBody || customerRewardIdBody)) {
+        await applyBookingVoucher({
+          customerId: customer.id,
+          couponCode: couponCodeBody,
+          customerRewardId: customerRewardIdBody,
+          orderTotal: requestSubtotal,
+          primaryBooking: createdBookings[0],
+          transaction: t,
+        });
+      }
+
       notifyBookingId = createdBookings[0]?.id || null;
     }
 
@@ -1397,6 +1555,7 @@ exports.cancelBooking = async (req, res, next) => {
       item.updated_by = req.user.id;
       await item.save({ transaction: t });
     }
+    await restoreRedeemedRewardsForGroup(group, t);
     await t.commit();
     committed = true;
     notifyBookingCancelledForOwner(booking.id);
@@ -2110,6 +2269,7 @@ exports.rejectBooking = async (req, res, next) => {
       item.updated_by = req.user.id;
       await item.save({ transaction: t });
     }
+    await restoreRedeemedRewardsForGroup(group, t);
     await t.commit();
     committed = true;
     notifyBookingRejected(booking.id);

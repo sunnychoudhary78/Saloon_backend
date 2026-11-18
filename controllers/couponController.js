@@ -1,7 +1,8 @@
-const { Coupon } = require('../models');
+const { Coupon, Customer, CustomerReward, Reward } = require('../models');
 const AppError = require('../middlewares/AppError');
 const { genericQuery } = require('../services/genericQueryService');
 const { couponRegistryByKey } = require('../config/columnRegistry');
+const { calculateVoucherDiscount } = require('../services/rewardSelectionService');
 const { Op } = require('sequelize');
 
 const defaultColumns = ['title', 'code', 'discount_type', 'discount_value', 'min_order_value', 'valid_from', 'valid_to', 'status'];
@@ -88,6 +89,11 @@ exports.update = async (req, res, next) => {
           row[f] = req.body[f] !== '' && req.body[f] != null ? parseFloat(req.body[f]) : null;
         } else if (f === 'usage_limit') {
           row[f] = req.body[f] !== '' && req.body[f] != null ? parseInt(req.body[f], 10) : null;
+        } else if (f === 'status') {
+          row.status = req.body.status;
+          row.is_active = req.body.status === 'ACTIVE';
+        } else if (f === 'valid_from' || f === 'valid_to') {
+          row[f] = req.body[f] ? new Date(req.body[f]) : row[f];
         } else {
           row[f] = req.body[f];
         }
@@ -122,55 +128,148 @@ exports.makeInactive = async (req, res, next) => {
   }
 };
 
-exports.validate = async (req, res, next) => {
+exports.deleteCoupon = async (req, res, next) => {
   try {
-    const { code, order_amount } = req.body;
-    if (!code) throw new AppError('Coupon code is required', 400);
-
-    const coupon = await Coupon.findOne({
-      where: { code: code.trim().toUpperCase(), status: 'ACTIVE', is_active: true },
-    });
-    if (!coupon) throw new AppError('Invalid coupon code', 404);
-
-    const now = new Date();
-    if (now < new Date(coupon.valid_from) || now > new Date(coupon.valid_to)) {
-      throw new AppError('Coupon has expired or is not yet active', 400);
-    }
-
-    if (coupon.usage_limit && coupon.used_count >= coupon.usage_limit) {
-      throw new AppError('Coupon usage limit reached', 400);
-    }
-
-    const orderTotal = order_amount != null ? parseFloat(order_amount) : null;
-    const minOrder = parseFloat(coupon.min_order_value || 0);
-
-    if (orderTotal !== null && minOrder > 0 && orderTotal < minOrder) {
-      throw new AppError(`Minimum order value of ₹${minOrder.toFixed(2)} required to apply this coupon`, 400);
-    }
-
-    let discountAmount = 0;
-    if (orderTotal !== null) {
-      if (coupon.discount_type === 'PERCENT') {
-        const rawDiscount = (orderTotal * parseFloat(coupon.discount_value)) / 100;
-        const maxCap = coupon.max_discount_amount ? parseFloat(coupon.max_discount_amount) : null;
-        discountAmount = maxCap ? Math.min(rawDiscount, maxCap) : rawDiscount;
-      } else {
-        discountAmount = Math.min(orderTotal, parseFloat(coupon.discount_value));
-      }
-    }
-
-    res.json({
-      valid: true,
-      coupon,
-      discount_amount: parseFloat(discountAmount.toFixed(2)),
-      final_total: orderTotal !== null ? Math.max(0, parseFloat((orderTotal - discountAmount).toFixed(2))) : null,
-    });
+    const row = await Coupon.findByPk(req.params.id);
+    if (!row) throw new AppError('Coupon not found', 404);
+    await row.destroy();
+    res.json({ success: true, message: 'Coupon deleted successfully' });
   } catch (err) {
     next(err);
   }
 };
 
-// Customer Mobile App: List active public coupons for checkout
+function mapPersonalRewardToCoupon(cr) {
+  const reward = cr.reward;
+  return {
+    id: cr.id,
+    code: cr.issued_code || reward.reward_code,
+    title: reward.title,
+    description: reward.description,
+    image: reward.image,
+    discount_type: reward.discount_type || 'FLAT',
+    discount_value: reward.discount_value != null ? parseFloat(reward.discount_value) : 0,
+    min_order_value: reward.min_order_value != null ? parseFloat(reward.min_order_value) : 0,
+    max_discount_amount: reward.max_discount_amount != null ? parseFloat(reward.max_discount_amount) : null,
+    valid_to: cr.expires_at,
+    status: 'ACTIVE',
+    is_personal_reward: true,
+    customer_reward_id: cr.id,
+    brand_name: reward.brand_name,
+  };
+}
+
+exports.validate = async (req, res, next) => {
+  try {
+    const { code, order_amount } = req.body;
+    if (!code) throw new AppError('Coupon code is required', 400);
+
+    const normalizedCode = code.trim().toUpperCase();
+    const now = new Date();
+    const orderTotal = order_amount != null ? parseFloat(order_amount) : null;
+
+    // 1. Check public Coupon catalog first
+    const coupon = await Coupon.findOne({
+      where: { code: normalizedCode, status: 'ACTIVE', is_active: true },
+    });
+
+    if (coupon) {
+      if (now < new Date(coupon.valid_from) || now > new Date(coupon.valid_to)) {
+        throw new AppError('Coupon has expired or is not yet active', 400);
+      }
+
+      if (coupon.usage_limit && coupon.used_count >= coupon.usage_limit) {
+        throw new AppError('Coupon usage limit reached', 400);
+      }
+
+      const calc = calculateVoucherDiscount({
+        discountType: coupon.discount_type,
+        discountValue: coupon.discount_value,
+        orderAmount: orderTotal,
+        minOrderValue: coupon.min_order_value,
+        maxDiscountAmount: coupon.max_discount_amount,
+      });
+
+      if (!calc.eligible) {
+        throw new AppError(calc.reason, 400);
+      }
+
+      return res.json({
+        valid: true,
+        source: 'COUPON',
+        coupon,
+        discount_amount: calc.discountAmount,
+        final_total: calc.finalTotal,
+      });
+    }
+
+    // 2. Fallback: Check logged-in customer's claimed internal SALON_DISCOUNT reward voucher
+    if (req.user?.id) {
+      const customer = await Customer.findOne({ where: { user_id: req.user.id } });
+      if (customer) {
+        const personalReward = await CustomerReward.findOne({
+          where: {
+            customer_id: customer.id,
+            status: 'CLAIMED',
+            [Op.or]: [
+              { issued_code: normalizedCode },
+              { '$reward.reward_code$': normalizedCode },
+            ],
+          },
+          include: [
+            {
+              model: Reward,
+              as: 'reward',
+              required: true,
+              where: { reward_type: 'SALON_DISCOUNT' },
+            },
+          ],
+          order: [['expires_at', 'ASC']],
+        });
+
+        if (personalReward) {
+          if (new Date(personalReward.expires_at) < now) {
+            personalReward.status = 'EXPIRED';
+            await personalReward.save();
+            throw new AppError('This reward voucher has expired', 400);
+          }
+
+          const mapped = mapPersonalRewardToCoupon(personalReward);
+          if (!mapped.discount_value || mapped.discount_value <= 0) {
+            throw new AppError('This reward voucher does not have a valid discount configured', 400);
+          }
+
+          const calc = calculateVoucherDiscount({
+            discountType: mapped.discount_type,
+            discountValue: mapped.discount_value,
+            orderAmount: orderTotal,
+            minOrderValue: mapped.min_order_value,
+            maxDiscountAmount: mapped.max_discount_amount,
+          });
+
+          if (!calc.eligible) {
+            throw new AppError(calc.reason, 400);
+          }
+
+          return res.json({
+            valid: true,
+            source: 'REWARD',
+            customer_reward_id: personalReward.id,
+            coupon: mapped,
+            discount_amount: calc.discountAmount,
+            final_total: calc.finalTotal,
+          });
+        }
+      }
+    }
+
+    throw new AppError('Invalid or already redeemed coupon code', 404);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// Customer Mobile App: List active public coupons + customer's unlocked internal next-booking vouchers
 exports.listPublic = async (req, res, next) => {
   try {
     const now = new Date();
@@ -183,7 +282,40 @@ exports.listPublic = async (req, res, next) => {
       },
       order: [['created_at', 'DESC']],
     });
-    res.json({ data: coupons });
+
+    const eligibleCoupons = coupons
+      .filter((c) => !c.usage_limit || c.used_count < c.usage_limit)
+      .map((c) => ({ ...c.toJSON(), is_personal_reward: false }));
+
+    let personalVouchers = [];
+    if (req.user?.id) {
+      const customer = await Customer.findOne({ where: { user_id: req.user.id } });
+      if (customer) {
+        const claimedRewards = await CustomerReward.findAll({
+          where: {
+            customer_id: customer.id,
+            status: 'CLAIMED',
+            expires_at: { [Op.gte]: now },
+          },
+          include: [
+            {
+              model: Reward,
+              as: 'reward',
+              required: true,
+              where: {
+                reward_type: 'SALON_DISCOUNT',
+                discount_value: { [Op.gt]: 0 },
+              },
+            },
+          ],
+          order: [['expires_at', 'ASC']],
+        });
+        personalVouchers = claimedRewards.map(mapPersonalRewardToCoupon);
+      }
+    }
+
+    // Show personal unlocked next-booking vouchers first, then public coupons
+    res.json({ data: [...personalVouchers, ...eligibleCoupons] });
   } catch (err) {
     next(err);
   }

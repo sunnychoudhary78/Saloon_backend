@@ -10,5 +10,6 @@ router.post('/query', authMiddleware, permissionMiddleware('coupon.read'), async
 router.post('/', authMiddleware, permissionMiddleware('coupon.create'), uploadCouponImage, asyncHandler(ctrl.create));
 router.put('/:id', authMiddleware, permissionMiddleware('coupon.update'), uploadCouponImage, asyncHandler(ctrl.update));
 router.patch('/:id/inactivate', authMiddleware, permissionMiddleware('coupon.makeInactive'), asyncHandler(ctrl.makeInactive));
+router.delete('/:id', authMiddleware, permissionMiddleware('coupon.makeInactive'), asyncHandler(ctrl.deleteCoupon));
 
 module.exports = router;

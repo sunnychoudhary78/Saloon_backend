@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { newBooking, cashConfirmed } = require('../services/pushNotificationTemplates');
+const { newBooking, cashConfirmed, transformationUploaded, NOTIFICATION_TYPES, SCREENS } = require('../services/pushNotificationTemplates');
 
 test('premium new booking uses urgent title and isPremium flag', () => {
   const payload = newBooking(
@@ -46,4 +46,26 @@ test('cash confirmed with extra includes total extra and booked', () => {
     payload.notification.body,
     'Glow confirmed ₹700 cash (₹200 extra on the booked ₹500).'
   );
+});
+
+test('transformationUploaded builds payload targeting customer transformations screen', () => {
+  const payload = transformationUploaded('Star Salon', 'post-123');
+  assert.equal(payload.notification.title, 'New Transformation Photo Added!');
+  assert.equal(
+    payload.notification.body,
+    'Star Salon uploaded your before & after transformation photo. Tap to review your look.'
+  );
+  assert.equal(payload.data.type, NOTIFICATION_TYPES.TRANSFORMATION_UPLOADED);
+  assert.equal(payload.data.screen, SCREENS.CUSTOMER_TRANSFORMATIONS);
+  assert.equal(payload.data.userRole, 'customer');
+  assert.equal(payload.data.postId, 'post-123');
+  assert.equal(payload.data.route, '/customer/transformations');
+});
+
+test('transformationUploaded handles default salon name and empty postId', () => {
+  const payload = transformationUploaded(null, null);
+  assert.equal(payload.notification.title, 'New Transformation Photo Added!');
+  assert.match(payload.notification.body, /Your salon/);
+  assert.equal(payload.data.route, '/customer/transformations');
+  assert.equal(payload.data.postId, undefined);
 });

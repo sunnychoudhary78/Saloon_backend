@@ -59,6 +59,9 @@ exports.update = async (req, res, next) => {
     for (const f of fields) {
       if (req.body[f] !== undefined) row[f] = req.body[f];
     }
+    if (req.body.status !== undefined) {
+      row.is_active = req.body.status === 'ACTIVE';
+    }
     if (row.redirect_type === 'NONE') {
       row.redirect_value = null;
     }

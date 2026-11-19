@@ -40,6 +40,9 @@ module.exports = (sequelize, DataTypes) => {
       responded_at: { type: DataTypes.DATE, allowNull: true },
       reminder_sent_at: { type: DataTypes.DATE, allowNull: true },
       premium_payment_due_at: { type: DataTypes.DATE, allowNull: true },
+      coupon_code: { type: DataTypes.STRING(100), allowNull: true },
+      customer_reward_id: { type: DataTypes.UUID, allowNull: true },
+      discount_amount: { type: DataTypes.DECIMAL(10, 2), allowNull: true, defaultValue: 0 },
       ...baseFields(DataTypes),
     },
     {

@@ -2,11 +2,45 @@ const { buildWhereFromFilters } = require('./employeeFilterBuilder');
 const { registryByKey } = require('../config/columnRegistry');
 const { TableConfig } = require('../models');
 
+function isTextSearchableAttribute(Model, path) {
+  const attr = Model?.rawAttributes?.[path];
+  if (!attr) return false;
+  const typeKey = attr.type?.key;
+  // PostgreSQL rejects ILIKE (~~*) on ENUM, UUID, INTEGER, BOOLEAN, etc.
+  if (typeKey === 'ENUM' || Array.isArray(attr.values)) return false;
+  return (
+    typeKey === 'STRING' ||
+    typeKey === 'TEXT' ||
+    typeKey === 'CHAR' ||
+    typeKey === 'CITEXT'
+  );
+}
+
+function resolveSearchCols(Model, defaultColumns, contextRegistry) {
+  const getReg = (key) =>
+    contextRegistry && contextRegistry[key]
+      ? contextRegistry[key]
+      : registryByKey[key];
+
+  const candidateKeys = new Set(defaultColumns || []);
+  if (contextRegistry) {
+    for (const key of Object.keys(contextRegistry)) {
+      candidateKeys.add(key);
+    }
+  }
+
+  return [...candidateKeys].filter((key) => {
+    const reg = getReg(key);
+    if (!reg || reg.type !== 'string') return false;
+    return isTextSearchableAttribute(Model, reg.path);
+  });
+}
+
 /**
- * Generic query handler for simple models (BloodGroup, MaritalStatus, Gender, etc.)
+ * Generic query handler for admin catalog models (Rewards, Coupons, Banners, etc.)
  * @param {Object} Model - Sequelize Model
  * @param {Object} req - Express request object
- * @param {String} tableKey - Key for TableConfig (e.g., 'blood_groups')
+ * @param {String} tableKey - Key for TableConfig (e.g., 'rewards')
  * @param {Array} defaultColumns - Array of default column keys
  * @returns {Object} { rows, meta, columns }
  */
@@ -19,23 +53,24 @@ exports.genericQuery = async (Model, req, tableKey, defaultColumns, contextRegis
   const getReg = (key) => (contextRegistry && contextRegistry[key]) ? contextRegistry[key] : registryByKey[key];
 
   // 1. Build Where Clause
-  const { columnFilters, advancedFilters, search, is_active } = req.body;
+  const { columnFilters, advancedFilters, search, is_active, status } = req.body;
 
-  // Determine search columns (use string columns from defaultColumns)
-  const searchCols = defaultColumns.filter(key => {
-    const reg = getReg(key);
-    return reg && reg.type === 'string';
-  });
+  // Only include actual STRING/TEXT columns in ILIKE search (never PostgreSQL ENUMs)
+  const searchCols = resolveSearchCols(Model, defaultColumns, contextRegistry);
 
   const payload = {
     columnFilters,
     advancedFilters,
     search,
     is_active,
-    searchCols
+    searchCols,
   };
 
   const { where } = buildWhereFromFilters(payload, contextRegistry);
+
+  if (status && Model.rawAttributes?.status) {
+    where.status = status;
+  }
 
   // 2. Sorting
   let order = [['created_at', 'DESC']];
@@ -68,8 +103,8 @@ exports.genericQuery = async (Model, req, tableKey, defaultColumns, contextRegis
   const columnsMeta = activeColumns
     .filter(ac => ac.visible)
     .map(ac => {
-        const reg = getReg(ac.key);
-        return { key: ac.key, label: reg.label, type: reg.type };
+      const reg = getReg(ac.key);
+      return { key: ac.key, label: reg.label, type: reg.type };
     });
 
   // 4. Execute Query
@@ -91,3 +126,5 @@ exports.genericQuery = async (Model, req, tableKey, defaultColumns, contextRegis
     }
   };
 };
+
+exports.resolveSearchCols = resolveSearchCols;

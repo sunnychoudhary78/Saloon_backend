@@ -197,11 +197,17 @@ async function getCheckoutSummary(customerId, groupId) {
   const premiumFee = await resolvePremiumFeeForGroup(bookings);
   const salon = await Salon.findByPk(primary.salon_id);
 
-  let serviceTotal = 0;
+  let serviceSubtotal = 0;
+  let discountAmount = 0;
+  let couponCode = null;
   for (const b of bookings) {
-    serviceTotal += round2(require('./paymentService').servicePayableAmount(b.service));
+    serviceSubtotal += round2(require('./paymentService').servicePayableAmount(b.service));
+    discountAmount += round2(Number(b.discount_amount || 0));
+    if (!couponCode && b.coupon_code) couponCode = b.coupon_code;
   }
-  serviceTotal = round2(serviceTotal);
+  serviceSubtotal = round2(serviceSubtotal);
+  discountAmount = Math.min(round2(discountAmount), serviceSubtotal);
+  const serviceTotal = round2(Math.max(0, serviceSubtotal - discountAmount));
 
   const payments = await Payment.findAll({
     where: { booking_group_id: resolveGroupId(primary) },
@@ -219,6 +225,9 @@ async function getCheckoutSummary(customerId, groupId) {
     is_premium: isPremium,
     premium_paid: premiumPaid,
     premium_fee: premiumFee,
+    subtotal_before_discount: serviceSubtotal,
+    discount_amount: discountAmount,
+    coupon_code: couponCode,
     service_total: serviceTotal,
     combined_total: premiumFee ? round2(serviceTotal + premiumFee) : serviceTotal,
     can_pay_premium_only: isPremium && !premiumPaid,

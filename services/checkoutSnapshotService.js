@@ -87,7 +87,17 @@ async function buildCheckoutSnapshot({ bookings, checkoutKind, premiumFeeAmount 
 
   const premiumPlatform = premiumSnapshot.premium_platform_amount || 0;
   const premiumSalon = premiumSnapshot.premium_salon_amount || 0;
-  const totalAmount = round2(totalServiceGross + (premiumSnapshot.premium_fee_amount || 0));
+
+  let effectiveDiscount = 0;
+  if (includeServiceLines) {
+    const rawGroupDiscount = round2(
+      bookings.reduce((sum, b) => sum + Number(b?.discount_amount || 0), 0)
+    );
+    effectiveDiscount = Math.min(Math.max(0, rawGroupDiscount), totalServiceGross);
+  }
+
+  const netServicePayable = round2(Math.max(0, totalServiceGross - effectiveDiscount));
+  const totalAmount = round2(netServicePayable + (premiumSnapshot.premium_fee_amount || 0));
 
   return {
     settings_version: settings.current_version,
@@ -95,6 +105,7 @@ async function buildCheckoutSnapshot({ bookings, checkoutKind, premiumFeeAmount 
     premium_fee_platform_percent: premiumFeePlatformPercent,
     premium_fee_salon_percent: premiumFeeSalonPercent,
     ...premiumSnapshot,
+    discount_amount: effectiveDiscount,
     commission_amount: round2(totalCommission),
     platform_amount: round2(totalCommission + premiumPlatform),
     salon_net_amount: round2(totalServiceSalonNet + premiumSalon),

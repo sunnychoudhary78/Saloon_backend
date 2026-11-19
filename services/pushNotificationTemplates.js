@@ -13,6 +13,7 @@ const NOTIFICATION_TYPES = {
   SALON_APPLICATION_APPROVED: 'salon_application_approved',
   SALON_APPLICATION_REJECTED: 'salon_application_rejected',
   NEW_REVIEW: 'new_review',
+  TRANSFORMATION_UPLOADED: 'transformation_uploaded',
 };
 
 const SCREENS = {
@@ -22,6 +23,7 @@ const SCREENS = {
   OWNER_EARNINGS: 'owner_earnings',
   OWNER_DASHBOARD: 'owner_dashboard',
   OWNER_REVIEWS: 'owner_reviews',
+  CUSTOMER_TRANSFORMATIONS: 'customer_transformations',
 };
 
 function buildPayload({
@@ -353,6 +355,21 @@ function newReview(review, customerName, salonName) {
   });
 }
 
+function transformationUploaded(salonName, postId) {
+  const name = salonName || 'Your salon';
+  return buildPayload({
+    type: NOTIFICATION_TYPES.TRANSFORMATION_UPLOADED,
+    title: 'New Transformation Photo Added!',
+    body: `${name} uploaded your before & after transformation photo. Tap to review your look.`,
+    screen: SCREENS.CUSTOMER_TRANSFORMATIONS,
+    userRole: 'customer',
+    extraData: {
+      ...(postId ? { postId: String(postId) } : {}),
+      route: '/customer/transformations',
+    },
+  });
+}
+
 module.exports = {
   NOTIFICATION_TYPES,
   SCREENS,
@@ -374,4 +391,5 @@ module.exports = {
   salonApplicationApproved,
   salonApplicationRejected,
   newReview,
+  transformationUploaded,
 };

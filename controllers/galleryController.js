@@ -14,6 +14,8 @@ const {
 } = require('../models');
 const AppError = require('../middlewares/AppError');
 const { assertSalonOwnership } = require('../utils/ownershipGuard');
+const { sendToUserAsync } = require('../services/pushNotificationService');
+const pushTemplates = require('../services/pushNotificationTemplates');
 
 function deleteDiskFile(fileUrl) {
   if (!fileUrl || typeof fileUrl !== 'string') return;
@@ -34,7 +36,7 @@ function deleteDiskFile(fileUrl) {
 
 exports.ownerCreatePost = async (req, res) => {
   const { salonId } = req.params;
-  await assertSalonOwnership(req.user.id, salonId);
+  const { salon } = await assertSalonOwnership(req.user.id, salonId);
 
   const beforeFile = req.files?.before_image?.[0];
   const afterFile = req.files?.after_image?.[0];
@@ -60,9 +62,23 @@ exports.ownerCreatePost = async (req, res) => {
     sort_order = 0,
   } = req.body;
 
+  if (!customer_phone) {
+    if (beforeFile) deleteDiskFile(`/api/uploads/gallery/${beforeFile.filename}`);
+    if (afterFile) deleteDiskFile(`/api/uploads/gallery/${afterFile.filename}`);
+    throw new AppError('Customer phone number is required', 400);
+  }
+
   let resolvedCustomerId = customer_id || null;
   if (!resolvedCustomerId && customer_phone) {
-    const customerUser = await User.findOne({ where: { phone: customer_phone } });
+    const rawPhone = String(customer_phone).trim();
+    const tenDigits = rawPhone.slice(-10);
+    const customerUser = await User.findOne({
+      where: {
+        phone: {
+          [Op.or]: [rawPhone, tenDigits, `+91${tenDigits}`],
+        },
+      },
+    });
     if (customerUser) resolvedCustomerId = customerUser.id;
   }
 
@@ -92,6 +108,14 @@ exports.ownerCreatePost = async (req, res) => {
     customer_consent: resolvedCustomerId ? 'PENDING' : 'APPROVED',
     sort_order,
   });
+
+  if (resolvedCustomerId) {
+    const salonName = salon?.salon_name || 'Your salon';
+    sendToUserAsync(
+      resolvedCustomerId,
+      pushTemplates.transformationUploaded(salonName, post.id)
+    );
+  }
 
   const created = await SalonGalleryPost.findByPk(post.id, {
     include: [
@@ -323,18 +347,19 @@ exports.toggleLikePost = async (req, res) => {
   if (existingLike) {
     await existingLike.destroy();
     await post.decrement('likes_count');
-    const updatedCount = Math.max(0, post.likes_count - 1);
+    await post.reload();
     return res.json({
       liked: false,
-      likes_count: updatedCount,
+      likes_count: Math.max(0, post.likes_count),
     });
   }
 
   await SalonGalleryLike.create({ post_id: postId, user_id: userId });
   await post.increment('likes_count');
+  await post.reload();
   return res.json({
     liked: true,
-    likes_count: post.likes_count + 1,
+    likes_count: post.likes_count,
   });
 };
 
@@ -371,7 +396,9 @@ exports.customerUpdateConsent = async (req, res) => {
   if (!post) throw new AppError('Transformation post not found', 404);
 
   post.customer_consent = consent;
-  if (consent === 'REJECTED') {
+  if (consent === 'APPROVED') {
+    post.is_public = true;
+  } else if (consent === 'REJECTED') {
     post.is_public = false;
   }
   await post.save();

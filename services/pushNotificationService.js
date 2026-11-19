@@ -68,16 +68,18 @@ async function removeInvalidTokens(tokens) {
 }
 
 async function persistNotification(userId, payload) {
-  const { notification, data } = payload;
-  if (!notification?.title) return null;
+  const { notification, data } = payload || {};
+  const title = notification?.title || payload?.title;
+  const body = notification?.body || payload?.body || '';
+  if (!title) return null;
 
   try {
     return await UserNotification.create({
       user_id: userId,
-      type: data?.type || 'general',
-      title: notification.title,
-      body: notification.body || '',
-      data: data || {},
+      type: data?.type || payload?.type || 'general',
+      title,
+      body,
+      data: data || payload?.data || {},
     });
   } catch (err) {
     console.error(`[push] persistNotification failed for ${userId}:`, err.message);
@@ -86,12 +88,14 @@ async function persistNotification(userId, payload) {
 }
 
 function toStringData(payload) {
-  const { notification, data } = payload;
+  const { notification, data } = payload || {};
+  const title = notification?.title || payload?.title || '';
+  const body = notification?.body || payload?.body || '';
   return Object.fromEntries(
     Object.entries({
-      ...(data || {}),
-      title: notification?.title || '',
-      body: notification?.body || '',
+      ...(data || payload?.data || {}),
+      title,
+      body,
     }).map(([k, v]) => [k, v == null ? '' : String(v)]),
   );
 }

@@ -5,7 +5,13 @@ const assert = require('node:assert/strict');
 const { Op } = require('sequelize');
 const { ilikeOr, applySearchOr } = require('../utils/adminSearch');
 const { buildWhereFromFilters } = require('../services/employeeFilterBuilder');
-const { couponRegistryByKey, bannerRegistryByKey } = require('../config/columnRegistry');
+const { resolveSearchCols } = require('../services/genericQueryService');
+const { Reward, Coupon, PromotionalBanner } = require('../models');
+const {
+  couponRegistryByKey,
+  bannerRegistryByKey,
+  rewardRegistryByKey,
+} = require('../config/columnRegistry');
 
 test('ilikeOr returns null for empty term', () => {
   assert.equal(ilikeOr(['code'], '  '), null);
@@ -54,4 +60,27 @@ test('buildWhereFromFilters honors banner title search', () => {
   assert.deepEqual(where[Op.or][0], {
     title: { [Op.iLike]: '%summer%' },
   });
+});
+
+test('resolveSearchCols excludes PostgreSQL ENUM columns and includes reward_code for Rewards', () => {
+  const rewardCols = resolveSearchCols(
+    Reward,
+    ['brand_name', 'title', 'reward_type', 'status'],
+    rewardRegistryByKey,
+  );
+  assert.deepEqual(rewardCols.sort(), ['brand_name', 'reward_code', 'title']);
+
+  const couponCols = resolveSearchCols(
+    Coupon,
+    ['title', 'code', 'discount_type', 'status'],
+    couponRegistryByKey,
+  );
+  assert.deepEqual(couponCols.sort(), ['code', 'title']);
+
+  const bannerCols = resolveSearchCols(
+    PromotionalBanner,
+    ['title', 'redirect_type', 'status'],
+    bannerRegistryByKey,
+  );
+  assert.deepEqual(bannerCols, ['title']);
 });

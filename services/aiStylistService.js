@@ -662,7 +662,7 @@ async function generateVirtualTryOn({
   }
 
   const frontPngBuffer = await sharp(frontDiskPath)
-    .resize(1024, 1024, { fit: 'contain', background: { r: 20, g: 20, b: 20, alpha: 1 } })
+    .resize(1024, 1024, { fit: 'cover', position: 'center' })
     .ensureAlpha()
     .png()
     .toBuffer();
@@ -671,15 +671,16 @@ async function generateVirtualTryOn({
   const maskDiskPath = urlToDiskPath(analysis.hair_mask_url);
   if (maskDiskPath && fs.existsSync(maskDiskPath)) {
     maskPngBuffer = await sharp(maskDiskPath)
-      .resize(1024, 1024, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 1 } })
+      .resize(1024, 1024, { fit: 'cover', position: 'center' })
       .ensureAlpha()
       .png()
       .toBuffer();
   }
 
-  const colorClause = hairColor ? ` with natural ${hairColor} hair color` : '';
-  const detailClause = hairstylePrompt ? ` (${hairstylePrompt})` : '';
-  const prompt = `Change ONLY the person's hairstyle to a stylish, clearly visible, well-defined "${hairstyleName}" haircut${detailClause}${colorClause}. Keep the person's face, eyes, eyebrows, nose, mouth, facial features, skin tone, and clothing unchanged and identical to the original photo. Professional salon haircut details, clean hairline, photorealistic texture.`;
+  const genderTerm = (analysis.preferences?.gender === 'women') ? 'woman' : (analysis.preferences?.gender === 'men') ? 'man' : 'person';
+  const colorClause = hairColor ? ` with rich natural ${hairColor} hair color` : '';
+  const detailClause = hairstylePrompt ? `, ${hairstylePrompt}` : '';
+  const prompt = `STRICT REQUIREMENT: Keep the EXACT same room background, exact same jacket, clothing, body, pose, face, eyes, eyebrows, beard, skin tone, lighting, and camera angle identical to the original input photo. Do NOT add a barber cape or change the background. ONLY modify and restyle the hair on top of the head into a modern, stylish, clearly visible "${hairstyleName}" haircut${colorClause}${detailClause} with a sharp clean hairline naturally transitioning into the forehead skin.`;
 
   const generated = await generateHairTryOn({
     frontPngBuffer,
@@ -692,7 +693,7 @@ async function generateVirtualTryOn({
   await fs.promises.writeFile(outPath, generated.buffer);
   const resultUrl = `/api/uploads/ai-scans/${outFilename}`;
 
-  return AiTryonResult.create({
+  const record = await AiTryonResult.create({
     analysis_id: analysis.id,
     user_id: userId,
     hairstyle_name: hairstyleName,
@@ -703,6 +704,10 @@ async function generateVirtualTryOn({
     created_by: userId,
     updated_by: userId,
   });
+
+  const resJson = record.toJSON ? record.toJSON() : { ...record };
+  resJson.original_image_url = analysis.front_image_url;
+  return resJson;
 }
 
 module.exports = {

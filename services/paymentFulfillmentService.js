@@ -83,6 +83,19 @@ function dispatchPaymentNotifications(notifications) {
   } else if (notifications.premiumBookingId) {
     notifyPremiumPayment(notifications.premiumBookingId);
   }
+
+  // Immediately award mystery reward upon payment completion
+  const bookingId = notifications.salonFee?.bookingId || notifications.premiumBookingId;
+  if (bookingId) {
+    try {
+      const { awardMysteryReward } = require('../controllers/rewardController');
+      awardMysteryReward(bookingId).catch((err) =>
+        console.error('[reward] awardMysteryReward on payment error:', err.message)
+      );
+    } catch (err) {
+      console.error('[reward] awardMysteryReward import error:', err.message);
+    }
+  }
 }
 
 async function updatePremiumStatusForGroup(payment, status, userId, transaction) {

@@ -11,6 +11,8 @@ const {
   Service,
   User,
   Booking,
+  AiTryonResult,
+  AiFaceAnalysis,
 } = require('../models');
 const AppError = require('../middlewares/AppError');
 const { assertSalonOwnership } = require('../utils/ownershipGuard');
@@ -418,11 +420,17 @@ exports.adminQueryPosts = async (req, res) => {
   const limit = Math.min(100, Math.max(1, parseInt(req.body.limit, 10) || 20));
   const offset = (page - 1) * limit;
 
-  const where = {};
+  const where = { is_active: true };
   if (req.body.salon_id) where.salon_id = req.body.salon_id;
   if (req.body.staff_id) where.staff_id = req.body.staff_id;
   if (req.body.is_public !== undefined) where.is_public = req.body.is_public;
   if (req.body.is_featured !== undefined) where.is_featured = req.body.is_featured;
+  if (req.body.customer_consent) where.customer_consent = req.body.customer_consent;
+  if (req.body.has_customer === true) {
+    where.customer_id = { [Op.ne]: null };
+  } else if (req.body.has_customer === false) {
+    where.customer_id = null;
+  }
 
   const { count, rows } = await SalonGalleryPost.findAndCountAll({
     where,
@@ -430,9 +438,10 @@ exports.adminQueryPosts = async (req, res) => {
     offset,
     order: [['created_at', 'DESC']],
     include: [
-      { model: Salon, as: 'salon', attributes: ['id', 'salon_name', 'city'] },
-      { model: SalonStaff, as: 'staff', attributes: ['id', 'name', 'title'] },
-      { model: Service, as: 'service', attributes: ['id', 'service_name'] },
+      { model: Salon, as: 'salon', attributes: ['id', 'salon_name', 'city', 'address'] },
+      { model: SalonStaff, as: 'staff', attributes: ['id', 'name', 'title', 'specializations', 'profile_image'] },
+      { model: Service, as: 'service', attributes: ['id', 'service_name', 'price', 'duration_minutes'] },
+      { model: User, as: 'customer', attributes: ['id', 'name', 'phone', 'email'] },
     ],
   });
 
@@ -473,5 +482,56 @@ exports.adminToggleFeature = async (req, res) => {
     message: `Post ${post.is_featured ? 'featured' : 'unfeatured'} successfully`,
     data: post,
   });
+};
+
+exports.adminQueryAiTryons = async (req, res) => {
+  const page = Math.max(1, parseInt(req.body.page, 10) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(req.body.limit, 10) || 20));
+  const offset = (page - 1) * limit;
+
+  const where = {};
+  if (req.body.user_id) where.user_id = req.body.user_id;
+
+  const { count, rows } = await AiTryonResult.findAndCountAll({
+    where,
+    limit,
+    offset,
+    order: [['created_at', 'DESC']],
+    include: [
+      {
+        model: User,
+        as: 'user',
+        attributes: ['id', 'name', 'phone', 'email', 'profile_image'],
+      },
+      {
+        model: AiFaceAnalysis,
+        as: 'analysis',
+        attributes: ['id', 'front_image_url', 'detected_face_shape', 'hair_type', 'hair_density', 'skin_undertone', 'preferences'],
+      },
+    ],
+  });
+
+  res.json({
+    rows,
+    data: rows,
+    meta: { total: count, page, limit, totalPages: Math.ceil(count / limit) },
+    pagination: {
+      total: count,
+      page,
+      limit,
+      totalPages: Math.ceil(count / limit),
+    },
+  });
+};
+
+exports.adminDeleteAiTryon = async (req, res) => {
+  const { id } = req.params;
+  const tryon = await AiTryonResult.findByPk(id);
+  if (!tryon) throw new AppError('AI try-on record not found', 404);
+
+  deleteDiskFile(tryon.result_image_url);
+  await tryon.destroy();
+
+  res.json({ message: 'Customer AI try-on transformation deleted successfully' });
 };
 

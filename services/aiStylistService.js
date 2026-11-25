@@ -678,14 +678,20 @@ async function generateVirtualTryOn({
   }
 
   const genderTerm = (analysis.preferences?.gender === 'women') ? 'woman' : (analysis.preferences?.gender === 'men') ? 'man' : 'person';
-  const colorClause = hairColor ? ` with rich natural ${hairColor} hair color` : '';
+  const colorClause = hairColor ? ` with ${hairColor} hair color` : '';
   const detailClause = hairstylePrompt ? `, ${hairstylePrompt}` : '';
-  const prompt = `STRICT REQUIREMENT: Keep the EXACT same room background, exact same jacket, clothing, body, pose, face, eyes, eyebrows, beard, skin tone, lighting, and camera angle identical to the original input photo. Do NOT add a barber cape or change the background. ONLY modify and restyle the hair on top of the head into a modern, stylish, clearly visible "${hairstyleName}" haircut${colorClause}${detailClause} with a sharp clean hairline naturally transitioning into the forehead skin.`;
+  const prompt = `Edit this photo of the ${genderTerm}: change ONLY the hairstyle on the head to a "${hairstyleName}" haircut${colorClause}${detailClause}, with natural hairline and realistic hair strands. Keep the exact same face, eyes, eyebrows, nose, mouth, beard, expression, clothing, lighting, and room background completely unchanged.`;
 
   const generated = await generateHairTryOn({
     frontPngBuffer,
     maskPngBuffer,
     prompt,
+    hairstyleName,
+    hairstylePrompt,
+    hairColor,
+    gender: analysis.preferences?.gender,
+    faceShape: analysis.detected_face_shape,
+    hairType: analysis.hair_type,
   });
 
   const outFilename = `tryon-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`;

@@ -431,7 +431,22 @@ exports.awardMysteryReward = async (bookingId) => {
     });
     if (existing) {
       await t.rollback();
-      return existing;
+      const fullExisting = await CustomerReward.findByPk(existing.id, {
+        include: [
+          {
+            model: Reward,
+            as: 'reward',
+            attributes: REWARD_PUBLIC_ATTRIBUTES,
+          },
+          {
+            model: Booking,
+            as: 'booking',
+            attributes: ['id', 'booking_number', 'booking_date'],
+            include: [{ model: Salon, as: 'salon', attributes: ['id', 'salon_name'] }],
+          },
+        ],
+      });
+      return fullExisting || existing;
     }
 
     // Load all bookings in this visit group and any paid payments to determine exact visit spend
@@ -548,6 +563,23 @@ exports.awardMysteryReward = async (bookingId) => {
     await t.commit();
     committed = true;
 
+    // Reload with associations for full reward detail
+    const fullReward = await CustomerReward.findByPk(customerReward.id, {
+      include: [
+        {
+          model: Reward,
+          as: 'reward',
+          attributes: REWARD_PUBLIC_ATTRIBUTES,
+        },
+        {
+          model: Booking,
+          as: 'booking',
+          attributes: ['id', 'booking_number', 'booking_date'],
+          include: [{ model: Salon, as: 'salon', attributes: ['id', 'salon_name'] }],
+        },
+      ],
+    });
+
     notificationUserId = booking.customer.user?.id || null;
     if (notificationUserId) {
       const salonName = booking.salon?.salon_name || 'the salon';
@@ -557,18 +589,20 @@ exports.awardMysteryReward = async (bookingId) => {
         title: '🎉 Mystery Reward Unlocked!',
         body: isInternal
           ? `Congratulations! You unlocked a next-booking salon voucher (${selectedReward.title}) from your visit at ${salonName}. Scratch to reveal!`
-          : `Congratulations! You unlocked an exclusive reward from ${selectedReward.brand_name} for completing your appointment at ${salonName}. Scratch to reveal!`,
+          : `Congratulations! You unlocked an exclusive reward from ${selectedReward.brand_name} for your payment at ${salonName}. Scratch to reveal!`,
         data: {
           type: 'REWARD_UNLOCKED',
+          screen: 'customer_rewards',
           customer_reward_id: customerReward.id,
           brand: selectedReward.brand_name,
           reward_type: selectedReward.reward_type,
+          title: selectedReward.title,
         },
       };
       sendToUserAsync(notificationUserId, notificationPayload);
     }
 
-    return customerReward;
+    return fullReward || customerReward;
   } catch (err) {
     if (!committed) {
       await t.rollback().catch(() => {});
@@ -577,3 +611,5 @@ exports.awardMysteryReward = async (bookingId) => {
     return null;
   }
 };
+
+exports.formatCustomerRewardForApp = formatCustomerRewardForApp;

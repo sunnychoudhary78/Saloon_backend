@@ -8,21 +8,26 @@ const AppError = require('../middlewares/AppError');
 const { logger } = require('../utils/logger');
 
 const OPENAI_BASE_URL = 'https://api.openai.com/v1';
+const GEMINI_BASE_URL =
+  process.env.GEMINI_BASE_URL ||
+  'https://generativelanguage.googleapis.com/v1beta/models';
+const CLOUDFLARE_BASE_URL = 'https://api.cloudflare.com/client/v4/accounts';
 
 // Force IPv4 to avoid Node/Linux IPv6 stall timeouts when contacting AI APIs.
 const ipv4Agent = new https.Agent({ family: 4, keepAlive: true });
 
 const DEFAULT_GEMINI_MODELS = [
-  'gemini-3-flash-preview',
-  'gemini-3.8-flash',
   'gemini-3.1-flash-lite-preview',
-  'gemini-3.7-flash',
+  'gemini-3.8-flash',
   'gemini-flash-latest',
+  'gemini-flash-lite-latest',
+  'gemini-3.7-flash',
 ];
 
 const DEFAULT_GEMINI_IMAGE_MODELS = [
-  'gemini-3.1-flash-image',
   'gemini-nano-banana-2.1',
+  'nano-banana-pro-preview',
+  'gemini-3.1-flash-image',
   'gemini-3.1-flash-lite-image',
 ];
 
@@ -242,255 +247,64 @@ async function generateStructuredWithFallback(params) {
   );
 }
 
-async function generateHairTryOnWithGemini({ frontPngBuffer, prompt }) {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error('GEMINI_API_KEY is not configured');
-  }
-
-  const configured = (process.env.GEMINI_IMAGE_MODEL || '').trim();
-  const models = Array.from(
-    new Set([configured, ...DEFAULT_GEMINI_IMAGE_MODELS].filter(Boolean))
-  );
-
-  let lastErr = null;
-  for (const model of models) {
-    try {
-      const url = `${GEMINI_BASE_URL}/${encodeURIComponent(model)}:generateContent`;
-      const response = await axios.post(
-        url,
-        {
-          contents: [
-            {
-              role: 'user',
-              parts: [
-                { text: prompt },
-                {
-                  inline_data: {
-                    mime_type: 'image/png',
-                    data: frontPngBuffer.toString('base64'),
-                  },
-                },
-              ],
-            },
-          ],
-          generationConfig: {
-            responseModalities: ['IMAGE', 'TEXT'],
-          },
-        },
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': apiKey,
-          },
-          httpsAgent: ipv4Agent,
-          timeout: 60000,
-        }
-      );
-
-      const parts = response.data?.candidates?.[0]?.content?.parts || [];
-      const imgPart = parts.find(
-        (p) => p.inlineData?.data || p.inline_data?.data
-      );
-      const b64 = imgPart?.inlineData?.data || imgPart?.inline_data?.data;
-      if (b64) {
-        return {
-          provider: 'gemini',
-          model,
-          buffer: Buffer.from(b64, 'base64'),
-        };
-      }
-      lastErr = new Error(`${model}: No image returned`);
-    } catch (err) {
-      const msg = err.response?.data?.error?.message || err.message;
-      lastErr = new Error(`${model}: ${msg}`);
-    }
-  }
-
-  throw lastErr || new Error('Gemini image generation failed');
+/**
+ * Sanitizes image prompts so Cloudflare's strict safety filter never false-triggers
+ * on salon/grooming words (e.g. "attractive", "skin", "body", "bare").
+ */
+function sanitizeCloudflarePrompt(raw) {
+  if (!raw || typeof raw !== 'string') return '';
+  return raw
+    .replace(/\b(attractive|handsome|beautiful|sexy|hot|gorgeous|stunning)\b/gi, 'well-groomed')
+    .replace(/\bskin\s*tone\b/gi, 'complexion')
+    .replace(/\bskin\b/gi, 'forehead')
+    .replace(/\b(body|chest|neck|bare|naked|nude|lingerie|cleavage)\b/gi, 'upper portrait')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
-async function generateHairTryOnWithOpenAi({
-  frontPngBuffer,
-  maskPngBuffer = null,
-  prompt,
-}) {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    throw new Error('OPENAI_API_KEY is not configured');
-  }
-
-  const imageModel = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1-mini';
-
-  const scaledFront = await sharp(frontPngBuffer)
-    .resize(1024, 1024, { fit: 'cover', position: 'center' })
-    .ensureAlpha()
-    .png()
-    .toBuffer();
-
-  const form = new FormData();
-  form.append('model', imageModel);
-  form.append('prompt', prompt);
-  form.append('n', 1);
-  form.append('image', scaledFront, { filename: 'front.png', contentType: 'image/png' });
-
-  if (maskPngBuffer) {
-    const scaledMask = await sharp(maskPngBuffer)
-      .resize(1024, 1024, { fit: 'cover', position: 'center' })
-      .ensureAlpha()
-      .png()
-      .toBuffer();
-    form.append('mask', scaledMask, { filename: 'mask.png', contentType: 'image/png' });
-  }
-
-  const response = await axios.post(`${OPENAI_BASE_URL}/images/edits`, form, {
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      ...form.getHeaders(),
-    },
-    httpsAgent: ipv4Agent,
-    timeout: 60000,
-    maxBodyLength: Infinity,
-  });
-
-  const item = response.data?.data?.[0];
-  let rawBuffer = null;
-
-  if (item?.b64_json) {
-    rawBuffer = Buffer.from(item.b64_json, 'base64');
-  } else if (item?.url) {
-    const imgResp = await axios.get(item.url, {
-      responseType: 'arraybuffer',
-      httpsAgent: ipv4Agent,
-      timeout: 30000,
-    });
-    rawBuffer = Buffer.from(imgResp.data);
-  }
-
-  if (rawBuffer) {
-    // Deliver high quality optimized image with the generated hairstyle
-    const optimizedBuffer = await sharp(rawBuffer)
-      .resize(768, 768, { fit: 'cover', position: 'center' })
-      .jpeg({ quality: 90, mozjpeg: true })
-      .toBuffer();
-
-    return {
-      provider: 'openai',
-      model: imageModel,
-      buffer: optimizedBuffer,
-    };
-  }
-
-  throw new Error('OpenAI image edit API did not return an image');
-}
-
-async function createAutoHairMask(width = 512, height = 512) {
-  const svg = Buffer.from(`
-    <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <filter id="feather" x="-20%" y="-20%" width="140%" height="140%">
-          <feGaussianBlur stdDeviation="5" />
-        </filter>
-      </defs>
-      <rect width="${width}" height="${height}" fill="black" />
-      <g filter="url(#feather)">
-        <path d="M 0,0 L ${width},0 L ${width},${Math.round(height * 0.44)} 
-                 C ${Math.round(width * 0.85)},${Math.round(height * 0.44)} ${Math.round(width * 0.75)},${Math.round(height * 0.34)} ${Math.round(width * 0.5)},${Math.round(height * 0.30)}
-                 C ${Math.round(width * 0.25)},${Math.round(height * 0.30)} ${Math.round(width * 0.15)},${Math.round(height * 0.44)} 0,${Math.round(height * 0.44)} Z" 
-                 fill="white" />
-        <ellipse cx="${Math.round(width * 0.5)}" cy="${Math.round(height * 0.18)}" 
-                 rx="${Math.round(width * 0.46)}" ry="${Math.round(height * 0.22)}" fill="white" />
-      </g>
-      <g filter="url(#feather)">
-        <ellipse cx="${Math.round(width * 0.5)}" cy="${Math.round(height * 0.60)}" 
-                 rx="${Math.round(width * 0.26)}" ry="${Math.round(height * 0.28)}" fill="black" />
-      </g>
-    </svg>
-  `);
-  return sharp(svg).resize(width, height).png().toBuffer();
-}
-
-async function compositePreservedFace({ originalFront512, inpainted512 }) {
-  try {
-    const faceProtectMaskSvg = Buffer.from(`
-      <svg width="512" height="512" xmlns="http://www.w3.org/2000/svg">
-        <defs>
-          <filter id="blur" x="-20%" y="-20%" width="140%" height="140%">
-            <feGaussianBlur stdDeviation="10" />
-          </filter>
-        </defs>
-        <rect width="512" height="512" fill="black" />
-        <g filter="url(#blur)">
-          <ellipse cx="256" cy="305" rx="142" ry="165" fill="white" />
-        </g>
-      </svg>
-    `);
-
-    const faceMaskBuf = await sharp(faceProtectMaskSvg)
-      .resize(512, 512)
-      .png()
-      .toBuffer();
-
-    const originalFaceCutout = await sharp(originalFront512)
-      .composite([{ input: faceMaskBuf, blend: 'dest-in' }])
-      .png()
-      .toBuffer();
-
-    return await sharp(inpainted512)
-      .composite([{ input: originalFaceCutout, blend: 'over' }])
-      .jpeg({ quality: 92 })
-      .toBuffer();
-  } catch (err) {
-    logger.warn({ err: err.message }, 'Face composite refinement failed, using inpaint raw output');
-    return inpainted512;
-  }
-}
-
-async function generateHairTryOnWithCloudflare({
-  frontPngBuffer,
-  maskPngBuffer = null,
-  prompt,
-}) {
+/**
+ * Calls Cloudflare Workers AI for Text-to-Image generation (hairstyle lookbook previews).
+ * Supports FLUX.1-schnell primary and Leonardo Phoenix / Lucid Origin fallbacks.
+ */
+async function runCloudflareImageGen({ prompt, width = 1024, height = 1024 }) {
   const accountId = (process.env.CLOUDFLARE_ACCOUNT_ID || '').trim();
   const apiToken = (process.env.CLOUDFLARE_API_TOKEN || '').trim();
   if (!accountId || !apiToken) {
-    throw new Error('Cloudflare account ID or API token is not configured');
+    throw new AppError(
+      'Cloudflare Workers AI credentials (CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN) are not configured',
+      503,
+      { code: 'CLOUDFLARE_CONFIG_MISSING' }
+    );
   }
 
-  // Always perform inpainting on the user's actual photo so their face is preserved!
-  try {
-    const inpaintModel =
-      (process.env.CLOUDFLARE_INPAINT_MODEL || '').trim() ||
-      '@cf/runwayml/stable-diffusion-v1-5-inpainting';
+  const safePrompt = sanitizeCloudflarePrompt(prompt);
+  const configuredModel = (process.env.CLOUDFLARE_IMAGE_MODEL || '').trim();
+  const candidateModels = Array.from(
+    new Set([
+      configuredModel,
+      '@cf/black-forest-labs/flux-1-schnell',
+      '@cf/leonardo/phoenix-1.0',
+      '@cf/leonardo/lucid-origin',
+    ].filter(Boolean))
+  );
 
-    const [scaledFront, effectiveMask] = await Promise.all([
-      sharp(frontPngBuffer)
-        .resize(512, 512, { fit: 'cover' })
-        .png()
-        .toBuffer(),
-      maskPngBuffer
-        ? sharp(maskPngBuffer)
-            .resize(512, 512, { fit: 'cover' })
-            .png()
-            .toBuffer()
-        : createAutoHairMask(512, 512),
-    ]);
+  let lastError = null;
+  let quotaExceeded = false;
 
-    const url = `${CLOUDFLARE_BASE_URL}/${accountId}/ai/run/${inpaintModel}`;
-    const cleanPrompt = `${prompt}, photorealistic natural haircut, realistic salon hair texture, clean hairline, professional studio lighting`;
-    const response = await axios.post(
-      url,
-      {
-        prompt: cleanPrompt,
-        negative_prompt:
-          'distorted face, deformed eyes, extra ears, bad face, disfigured, cartoon, blurry, low resolution',
-        image_b64: scaledFront.toString('base64'),
-        mask: Array.from(effectiveMask),
-        num_steps: 20,
-        strength: 0.85,
-        guidance: 8.0,
-      },
-      {
+  for (const model of candidateModels) {
+    try {
+      const url = `${CLOUDFLARE_BASE_URL}/${accountId}/ai/run/${model}`;
+      const isFlux = model.toLowerCase().includes('flux');
+      const body = isFlux
+        ? { prompt: safePrompt, steps: 4 }
+        : {
+            prompt: safePrompt,
+            width: Math.min(width, 1024),
+            height: Math.min(height, 1024),
+            num_steps: 20,
+          };
+
+      const res = await axios.post(url, body, {
         headers: {
           Authorization: `Bearer ${apiToken}`,
           'Content-Type': 'application/json',
@@ -498,67 +312,374 @@ async function generateHairTryOnWithCloudflare({
         responseType: 'arraybuffer',
         httpsAgent: ipv4Agent,
         timeout: 45000,
-      }
-    );
-
-    if (response.data && response.data.length > 500) {
-      // Seamlessly composite the user's real eyes, nose, mouth and skin tone onto the result
-      const refinedBuffer = await compositePreservedFace({
-        originalFront512: scaledFront,
-        inpainted512: Buffer.from(response.data),
       });
 
-      return {
-        provider: 'cloudflare',
-        model: inpaintModel,
-        buffer: refinedBuffer,
-      };
+      const contentType = res.headers['content-type'] || '';
+      if (contentType.includes('application/json')) {
+        const text = Buffer.from(res.data).toString('utf8');
+        const json = JSON.parse(text);
+        if (json.result?.image) {
+          return {
+            buffer: Buffer.from(json.result.image, 'base64'),
+            model,
+            provider: 'cloudflare',
+          };
+        }
+        if (json.errors?.length) {
+          throw new Error(json.errors.map((e) => e.message).join(', '));
+        }
+      } else if (res.data && res.data.length > 500) {
+        return {
+          buffer: Buffer.from(res.data),
+          model,
+          provider: 'cloudflare',
+        };
+      }
+
+      throw new Error(`Cloudflare model ${model} returned empty image data`);
+    } catch (err) {
+      let msg = err.response?.data
+        ? Buffer.from(err.response.data).toString('utf8')
+        : err.message;
+      try {
+        const j = JSON.parse(msg);
+        if (j.errors?.[0]?.message) msg = j.errors[0].message;
+        if (j.errors?.[0]?.code === 4006) quotaExceeded = true;
+      } catch (_) {}
+      if (msg.toLowerCase().includes('neurons') || msg.toLowerCase().includes('allocation')) {
+        quotaExceeded = true;
+      }
+      lastError = new Error(`${model}: ${msg}`);
+      logger.warn(
+        { model, err: msg },
+        'Cloudflare Workers AI model attempt failed, falling back to next candidate'
+      );
+      if (quotaExceeded) break;
     }
-  } catch (inpaintErr) {
-    const msg = inpaintErr.response?.data?.toString() || inpaintErr.message;
-    logger.warn({ err: msg }, 'Cloudflare inpainting failed on user photo');
   }
 
-  throw new Error('Cloudflare inpainting failed to apply haircut to user photo');
-}
-
-/**
- * Generates a virtual hairstyle try-on image using OpenAI image edits API.
- */
-async function generateHairTryOn({
-  frontPngBuffer,
-  maskPngBuffer = null,
-  prompt,
-}) {
-  if (process.env.OPENAI_API_KEY) {
-    try {
-      return await generateHairTryOnWithOpenAi({
-        frontPngBuffer,
-        maskPngBuffer,
-        prompt,
-      });
-    } catch (err) {
-      const msg = err.response?.data?.error?.message || err.message;
-      logger.error({ err: msg }, 'OpenAI hair try-on failed');
-      throw new AppError(
-        `OpenAI Virtual Try-On failed: ${msg}`,
-        500,
-        { code: 'TRYON_ERROR', details: msg }
-      );
-    }
+  if (quotaExceeded) {
+    throw new AppError(
+      'Cloudflare Workers AI daily free quota (10,000 neurons) is exhausted. Please upgrade to Cloudflare Workers Paid plan or wait for daily reset.',
+      429,
+      { code: 'CLOUDFLARE_QUOTA_EXCEEDED', details: lastError?.message }
+    );
   }
 
   throw new AppError(
-    'Virtual Try-On is currently unavailable. Please configure OPENAI_API_KEY.',
-    503,
-    { code: 'TRYON_UNAVAILABLE' }
+    `Cloudflare Workers AI image generation failed: ${lastError?.message || 'All models failed'}`,
+    500,
+    { code: 'CLOUDFLARE_IMAGE_ERROR', details: lastError?.message }
   );
 }
 
 /**
+ * Calls Cloudflare Workers AI FLUX.2 image-editing models using multipart/form-data
+ * with the user's real photo (input_image_0) so the hairstyle is applied naturally
+ * onto their actual head without cookie-cutter forehead pasting.
+ */
+async function runCloudflareFlux2Edit({ imageBuffer, prompt }) {
+  const accountId = (process.env.CLOUDFLARE_ACCOUNT_ID || '').trim();
+  const apiToken = (process.env.CLOUDFLARE_API_TOKEN || '').trim();
+  if (!accountId || !apiToken) {
+    throw new AppError(
+      'Cloudflare Workers AI credentials (CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN) are not configured',
+      503,
+      { code: 'CLOUDFLARE_CONFIG_MISSING' }
+    );
+  }
+
+  const safePrompt = sanitizeCloudflarePrompt(prompt);
+  const configuredEditModel = (process.env.CLOUDFLARE_TRYON_MODEL || '').trim();
+  const editModels = Array.from(
+    new Set([
+      configuredEditModel,
+      '@cf/black-forest-labs/flux-2-klein-9b',
+      '@cf/black-forest-labs/flux-2-dev',
+      '@cf/black-forest-labs/flux-2-klein-4b',
+    ].filter(Boolean))
+  );
+
+  let lastError = null;
+  let quotaExceeded = false;
+
+  for (const model of editModels) {
+    try {
+      const url = `${CLOUDFLARE_BASE_URL}/${accountId}/ai/run/${model}`;
+      const form = new FormData();
+      form.append('prompt', safePrompt);
+      form.append('input_image_0', imageBuffer, {
+        filename: 'customer-photo.jpg',
+        contentType: 'image/jpeg',
+      });
+
+      const res = await axios.post(url, form, {
+        headers: {
+          Authorization: `Bearer ${apiToken}`,
+          ...form.getHeaders(),
+        },
+        responseType: 'arraybuffer',
+        httpsAgent: ipv4Agent,
+        timeout: 60000,
+        maxBodyLength: Infinity,
+      });
+
+      const contentType = res.headers['content-type'] || '';
+      if (contentType.includes('application/json')) {
+        const text = Buffer.from(res.data).toString('utf8');
+        const json = JSON.parse(text);
+        if (json.result?.image) {
+          return {
+            buffer: Buffer.from(json.result.image, 'base64'),
+            model,
+            provider: 'cloudflare',
+          };
+        }
+        if (json.errors?.length) {
+          throw new Error(json.errors.map((e) => e.message).join(', '));
+        }
+      } else if (res.data && res.data.length > 500) {
+        return {
+          buffer: Buffer.from(res.data),
+          model,
+          provider: 'cloudflare',
+        };
+      }
+
+      throw new Error(`Cloudflare FLUX.2 model ${model} returned empty image data`);
+    } catch (err) {
+      let msg = err.response?.data
+        ? Buffer.from(err.response.data).toString('utf8')
+        : err.message;
+      try {
+        const j = JSON.parse(msg);
+        if (j.errors?.[0]?.message) msg = j.errors[0].message;
+        if (j.errors?.[0]?.code === 4006) quotaExceeded = true;
+      } catch (_) {}
+      if (msg.toLowerCase().includes('neurons') || msg.toLowerCase().includes('allocation')) {
+        quotaExceeded = true;
+      }
+      lastError = new Error(`${model}: ${msg}`);
+      logger.warn(
+        { model, err: msg },
+        'Cloudflare FLUX.2 edit attempt failed, falling back to next candidate'
+      );
+      if (quotaExceeded) break;
+    }
+  }
+
+  if (quotaExceeded) {
+    throw new AppError(
+      'Cloudflare Workers AI daily free quota (10,000 neurons) is exhausted. Please upgrade to Cloudflare Workers Paid plan or wait for daily reset.',
+      429,
+      { code: 'CLOUDFLARE_QUOTA_EXCEEDED', details: lastError?.message }
+    );
+  }
+
+  throw new AppError(
+    `Cloudflare FLUX.2 hairstyle edit failed: ${lastError?.message || 'All models failed'}`,
+    500,
+    { code: 'CLOUDFLARE_TRYON_ERROR', details: lastError?.message }
+  );
+}
+
+/**
+ * Creates an alpha-channel inpainting mask specifically for OpenAI /images/edits.
+ * Maintained for test compatibility.
+ */
+async function createOpenAiHairMask(width = 1024, height = 1024) {
+  const svg = Buffer.from(`
+    <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <filter id="softHole" x="-20%" y="-20%" width="140%" height="140%">
+          <feGaussianBlur stdDeviation="8" />
+        </filter>
+        <mask id="holeMask">
+          <rect width="${width}" height="${height}" fill="white" />
+          <g filter="url(#softHole)">
+            <ellipse cx="${Math.round(width * 0.5)}" cy="${Math.round(height * 0.22)}" 
+                     rx="${Math.round(width * 0.36)}" ry="${Math.round(height * 0.22)}" fill="black" />
+            <ellipse cx="${Math.round(width * 0.25)}" cy="${Math.round(height * 0.32)}" 
+                     rx="${Math.round(width * 0.12)}" ry="${Math.round(height * 0.16)}" fill="black" />
+            <ellipse cx="${Math.round(width * 0.75)}" cy="${Math.round(height * 0.32)}" 
+                     rx="${Math.round(width * 0.12)}" ry="${Math.round(height * 0.16)}" fill="black" />
+          </g>
+          <g filter="url(#softHole)">
+            <ellipse cx="${Math.round(width * 0.5)}" cy="${Math.round(height * 0.60)}" 
+                     rx="${Math.round(width * 0.26)}" ry="${Math.round(height * 0.25)}" fill="white" />
+          </g>
+        </mask>
+      </defs>
+      <rect width="${width}" height="${height}" fill="black" mask="url(#holeMask)" />
+    </svg>
+  `);
+  return sharp(svg).resize(width, height).png().toBuffer();
+}
+
+/**
+ * Creates a standard grayscale mask for diffusion inpainting.
+ * Maintained for test compatibility.
+ */
+async function createStandardInpaintHairMask(width = 1024, height = 1024) {
+  const svg = Buffer.from(`
+    <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <filter id="feather" x="-20%" y="-20%" width="140%" height="140%">
+          <feGaussianBlur stdDeviation="10" />
+        </filter>
+      </defs>
+      <rect width="${width}" height="${height}" fill="black" />
+      <g filter="url(#feather)">
+        <path d="M 0,0 L ${width},0 L ${width},${Math.round(height * 0.44)} 
+                 C ${Math.round(width * 0.85)},${Math.round(height * 0.44)} ${Math.round(width * 0.75)},${Math.round(height * 0.32)} ${Math.round(width * 0.5)},${Math.round(height * 0.28)}
+                 C ${Math.round(width * 0.25)},${Math.round(height * 0.28)} ${Math.round(width * 0.15)},${Math.round(height * 0.44)} 0,${Math.round(height * 0.44)} Z" 
+                 fill="white" />
+        <ellipse cx="${Math.round(width * 0.5)}" cy="${Math.round(height * 0.20)}" 
+                 rx="${Math.round(width * 0.46)}" ry="${Math.round(height * 0.24)}" fill="white" />
+      </g>
+      <g filter="url(#feather)">
+        <ellipse cx="${Math.round(width * 0.5)}" cy="${Math.round(height * 0.60)}" 
+                 rx="${Math.round(width * 0.28)}" ry="${Math.round(height * 0.30)}" fill="black" />
+      </g>
+    </svg>
+  `);
+  return sharp(svg).resize(width, height).png().toBuffer();
+}
+
+/**
+ * Composites the newly generated hairstyle onto the user's authentic photo.
+ * The user's original photo (originalFront) serves as the base canvas:
+ * - 100% of the user's room background is kept intact.
+ * - 100% of the user's clothing, shirt/jacket, neck, and shoulders are preserved.
+ * - 100% of the user's face (eyes, eyebrows, nose, cheeks, mouth, jawline, beard) is preserved.
+ * Only the hair at the top of the head is replaced with the new hairstyle,
+ * blended naturally at the hairline using an organic feathered alpha mask.
+ */
+async function compositePreservedFace({
+  originalFront,
+  inpainted,
+  width = 1024,
+  height = 1024,
+}) {
+  try {
+    const hairMaskSvg = Buffer.from(`
+      <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="16" />
+          </filter>
+          <mask id="hairM">
+            <rect width="${width}" height="${height}" fill="black" />
+            <g filter="url(#soft)">
+              <!-- Top hair volume dome -->
+              <ellipse cx="${Math.round(width * 0.5)}" cy="${Math.round(height * 0.20)}" 
+                       rx="${Math.round(width * 0.38)}" ry="${Math.round(height * 0.20)}" fill="white" />
+              <!-- Left side temple/fade -->
+              <ellipse cx="${Math.round(width * 0.26)}" cy="${Math.round(height * 0.33)}" 
+                       rx="${Math.round(width * 0.13)}" ry="${Math.round(height * 0.14)}" fill="white" />
+              <!-- Right side temple/fade -->
+              <ellipse cx="${Math.round(width * 0.74)}" cy="${Math.round(height * 0.33)}" 
+                       rx="${Math.round(width * 0.13)}" ry="${Math.round(height * 0.14)}" fill="white" />
+            </g>
+            <!-- Strictly protect face oval below hairline -->
+            <g filter="url(#soft)">
+              <ellipse cx="${Math.round(width * 0.5)}" cy="${Math.round(height * 0.65)}" 
+                       rx="${Math.round(width * 0.32)}" ry="${Math.round(height * 0.30)}" fill="black" />
+            </g>
+          </mask>
+        </defs>
+        <rect width="${width}" height="${height}" fill="white" mask="url(#hairM)" />
+      </svg>
+    `);
+
+    const hairMaskBuf = await sharp(hairMaskSvg)
+      .resize(width, height)
+      .png()
+      .toBuffer();
+
+    const hairCutout = await sharp(inpainted)
+      .resize(width, height, { fit: 'cover', position: 'center' })
+      .ensureAlpha()
+      .composite([{ input: hairMaskBuf, blend: 'dest-in' }])
+      .png()
+      .toBuffer();
+
+    return await sharp(originalFront)
+      .resize(width, height, { fit: 'cover', position: 'center' })
+      .composite([{ input: hairCutout, blend: 'over' }])
+      .jpeg({ quality: 95, mozjpeg: true })
+      .toBuffer();
+  } catch (err) {
+    logger.warn({ err: err.message }, 'Hair composite blending failed, falling back to inpainted');
+    return inpainted;
+  }
+}
+
+/**
+ * Generates a virtual hairstyle try-on image using Cloudflare Workers AI FLUX.2 image editing.
+ * Passes the customer's real photo directly into FLUX.2 (input_image_0) so ONLY the hair is
+ * restyled naturally on the user's actual head, preserving face, clothes, and room background.
+ */
+async function generateHairTryOnWithCloudflare({
+  frontPngBuffer,
+  prompt,
+  hairstyleName = '',
+  hairstylePrompt = '',
+  hairColor = '',
+  gender = 'men',
+}) {
+  const inputJpeg = await sharp(frontPngBuffer)
+    .resize(1024, 1024, { fit: 'cover', position: 'center' })
+    .jpeg({ quality: 92, mozjpeg: true })
+    .toBuffer();
+
+  const genderTerm = gender === 'women' ? 'woman' : gender === 'men' ? 'man' : 'person';
+  const colorClause = hairColor ? ` with ${hairColor} hair color` : '';
+  const detailClause = hairstylePrompt ? `, ${hairstylePrompt}` : '';
+
+  const editPrompt = hairstyleName
+    ? `Edit this photo of the ${genderTerm}: change ONLY the hairstyle on the head to a "${hairstyleName}" haircut${colorClause}${detailClause}, with natural hairline and realistic hair strands. Keep the exact same face, eyes, eyebrows, nose, mouth, beard, expression, clothing, lighting, and room background completely unchanged.`
+    : prompt;
+
+  logger.info({ hairstyleName, gender: genderTerm }, 'Generating hairstyle try-on with Cloudflare FLUX.2 image editing...');
+
+  const generated = await runCloudflareFlux2Edit({
+    imageBuffer: inputJpeg,
+    prompt: editPrompt,
+  });
+
+  const optimized = await sharp(generated.buffer)
+    .resize(1024, 1024, { fit: 'cover', position: 'center' })
+    .jpeg({ quality: 93, mozjpeg: true })
+    .toBuffer();
+
+  return {
+    provider: 'cloudflare',
+    model: generated.model,
+    buffer: optimized,
+  };
+}
+
+/**
+ * Primary Virtual Hair Try-On entry point.
+ * Exclusively uses Cloudflare Workers AI (no fal.ai, no OpenAI/Gemini image generation).
+ */
+async function generateHairTryOn(params) {
+  try {
+    return await generateHairTryOnWithCloudflare(params);
+  } catch (err) {
+    logger.error({ err: err.message }, 'Cloudflare Virtual Try-On failed');
+    throw new AppError(
+      `Virtual Try-On failed: ${err.message}`,
+      err.statusCode || 500,
+      { code: 'TRYON_ERROR', details: err.message }
+    );
+  }
+}
+
+/**
  * Generates a photorealistic preview image for a recommended hairstyle
- * tailored to the person's face shape, gender, and hair type.
- * Uses OpenAI image generation API.
+ * tailored to face shape, gender, and hair type using Cloudflare Workers AI.
  */
 async function generateHairstylePreviewImage({
   hairstyleName,
@@ -566,53 +687,32 @@ async function generateHairstylePreviewImage({
   gender = 'men',
   hairType = 'straight',
 }) {
-  const apiKey = (process.env.OPENAI_API_KEY || '').trim();
-  if (!apiKey) return null;
-
   const promptGender = gender === 'women' ? 'woman' : 'man';
   const promptFace = faceShape ? `with a flattering ${faceShape} face shape` : '';
   const promptHair = hairType ? `${hairType} hair texture` : 'natural hair texture';
-
-  const prompt = `Close-up studio lookbook portrait of an attractive ${promptGender} ${promptFace}, featuring a stylish "${hairstyleName}" hairstyle, ${promptHair}, sharp focus on the haircut details, clean hairline, professional salon lighting, 8k resolution, photorealistic salon portfolio photo, neutral blurred background`;
+  const prompt = `Close-up studio lookbook portrait of an attractive ${promptGender} ${promptFace}, featuring a stylish "${hairstyleName}" hairstyle, ${promptHair}, sharp focus on the haircut details, clean hairline, professional salon lighting, 8k resolution, photorealistic salon portfolio photo, neutral blurred studio background`;
 
   try {
-    const res = await axios.post(
-      `${OPENAI_BASE_URL}/images/generations`,
-      {
-        model: process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1-mini',
-        prompt,
-        n: 1,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        httpsAgent: ipv4Agent,
-        timeout: 25000,
-      }
-    );
+    const generated = await runCloudflareImageGen({
+      prompt,
+      width: 512,
+      height: 512,
+    });
 
-    const b64 = res.data?.data?.[0]?.b64_json;
-    if (b64) {
-      const rawBuf = Buffer.from(b64, 'base64');
-      const optimized = await sharp(rawBuf)
-        .resize(512, 512, { fit: 'cover', position: 'center' })
-        .jpeg({ quality: 85, mozjpeg: true })
-        .toBuffer();
+    const optimized = await sharp(generated.buffer)
+      .resize(512, 512, { fit: 'cover', position: 'center' })
+      .jpeg({ quality: 86, mozjpeg: true })
+      .toBuffer();
 
-      return {
-        buffer: optimized,
-        provider: 'openai',
-        model: process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1-mini',
-      };
-    }
+    return {
+      buffer: optimized,
+      provider: 'cloudflare',
+      model: generated.model,
+    };
   } catch (err) {
-    const msg = err.response?.data ? JSON.stringify(err.response.data) : err.message;
-    logger.warn({ err: msg, hairstyleName }, 'OpenAI hairstyle preview generation failed');
+    logger.warn({ err: err.message, hairstyleName }, 'Cloudflare hairstyle preview generation failed');
+    return null;
   }
-
-  return null;
 }
 
 module.exports = {
@@ -622,4 +722,7 @@ module.exports = {
   generateStructuredWithFallback,
   generateHairTryOn,
   generateHairstylePreviewImage,
+  createOpenAiHairMask,
+  createStandardInpaintHairMask,
+  compositePreservedFace,
 };

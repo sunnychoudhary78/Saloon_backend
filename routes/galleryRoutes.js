@@ -27,5 +27,20 @@ router.patch(
   asyncHandler(galleryCtrl.adminToggleFeature)
 );
 
+// Admin Customer AI Try-on Management
+router.post(
+  '/ai-tryon/query',
+  authMiddleware,
+  roleMiddleware(['SUPER_ADMIN', 'ADMIN']),
+  asyncHandler(galleryCtrl.adminQueryAiTryons)
+);
+
+router.delete(
+  '/ai-tryon/:id',
+  authMiddleware,
+  roleMiddleware(['SUPER_ADMIN', 'ADMIN']),
+  asyncHandler(galleryCtrl.adminDeleteAiTryon)
+);
+
 module.exports = router;
 

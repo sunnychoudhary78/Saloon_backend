@@ -1723,6 +1723,17 @@ exports.verifyRazorpayPayment = async (req, res, next) => {
       dispatchPaymentNotifications(result.notifications);
     }
 
+    let customerReward = null;
+    try {
+      const { awardMysteryReward, formatCustomerRewardForApp } = require('./rewardController');
+      const awarded = await awardMysteryReward(result.payment.booking_id);
+      if (awarded) {
+        customerReward = formatCustomerRewardForApp(awarded);
+      }
+    } catch (rewardErr) {
+      console.error('[payment] awardMysteryReward error:', rewardErr.message);
+    }
+
     const booking = await Booking.findByPk(result.payment.booking_id, {
       include: [
         customerSalonInclude(),
@@ -1730,7 +1741,11 @@ exports.verifyRazorpayPayment = async (req, res, next) => {
         paymentInclude(),
       ],
     });
-    res.json({ data: shapePayment(result.payment), booking: shapeCustomerBooking(booking) });
+    res.json({
+      data: shapePayment(result.payment),
+      booking: shapeCustomerBooking(booking),
+      reward: customerReward,
+    });
   } catch (err) {
     if (!committed) await t.rollback();
     next(err);
